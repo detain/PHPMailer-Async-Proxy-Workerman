@@ -2,7 +2,7 @@
 <ruleset xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/squizlabs/php_codesniffer/phpcs.xsd">
 
-    <config name="testVersion" value="5.5-"/>
+    <config name="testVersion" value="8.1-"/>
 
     <arg name="basepath" value="."/>
     <arg name="cache" value=".phpcs-cache"/>
@@ -27,7 +27,6 @@
         <exclude name="PSR2.Methods.MethodDeclaration.Underscore"/>
         <exclude name="PSR12.Properties.ConstantVisibility.NotFound"/>
     </rule>
-    <rule ref="PHPCompatibility"/>
 
 
     <!--

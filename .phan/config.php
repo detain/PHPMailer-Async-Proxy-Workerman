@@ -35,6 +35,8 @@ return [
         'vendor/'
     ],
 
+    'target_php_version' => '8.1',
+
     'skip_slow_php_options_warning' => true,
 
     'exclude_file_regex' => '@^vendor/.*/(tests|Tests)/@',
