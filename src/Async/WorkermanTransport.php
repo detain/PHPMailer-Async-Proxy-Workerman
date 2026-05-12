@@ -66,6 +66,15 @@ final class WorkermanTransport implements Transport
     public function connect(string $host, int $port, int $timeout, array $contextOptions = []): bool
     {
         return FiberRunner::run(function () use ($host, $port, $timeout, $contextOptions): bool {
+            // Strip implicit-TLS scheme so we can write PROXY before the TLS
+            // handshake. The crypto upgrade happens below after the header is
+            // on the wire — same pattern as StreamTransport::connect().
+            $deferredCryptoMethod = null;
+            if (preg_match('#^(ssl|tls)://(.+)$#i', $host, $matches) === 1) {
+                $host = $matches[2];
+                $deferredCryptoMethod = $this->resolveImplicitCryptoMethod();
+            }
+
             $errno = 0;
             $errstr = '';
 
@@ -116,9 +125,32 @@ final class WorkermanTransport implements Transport
                 }
             }
 
+            if ($deferredCryptoMethod !== null) {
+                if (!$this->cryptoLoop($deferredCryptoMethod, $timeout)) {
+                    $this->connectError = [
+                        'errno' => 0,
+                        'errstr' => 'Implicit TLS handshake failed after PROXY header',
+                    ];
+                    $this->close();
+                    return false;
+                }
+            }
+
             $this->connectError = ['errno' => 0, 'errstr' => ''];
             return true;
         });
+    }
+
+    private function resolveImplicitCryptoMethod(): int
+    {
+        $method = STREAM_CRYPTO_METHOD_TLS_CLIENT;
+        if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) {
+            $method |= STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
+        }
+        if (defined('STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT')) {
+            $method |= STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT;
+        }
+        return $method;
     }
 
     public function close(): void
@@ -223,17 +255,27 @@ final class WorkermanTransport implements Transport
      *
      *   - true  — handshake complete, success
      *   - false — handshake failed (cert, protocol mismatch, etc.)
-     *   - 0     — would block; the kernel needs more I/O — caller MUST
-     *             re-call after the socket becomes readable AND/OR writable
+     *   - 0     — would block; the kernel needs more I/O.
      *
-     * We loop on (0), suspending on EventLoop::onReadable + onWritable
-     * (whichever fires first) up to the timeout, then retry the crypto
-     * call. This is the documented pattern for streams-API non-blocking
-     * TLS — see https://www.php.net/stream_socket_enable_crypto.
+     * PHP does not surface whether the underlying OpenSSL state wants more
+     * data on the read side or more space on the write side, so naïvely
+     * watching `onWritable` busy-loops: a connected TCP socket with room in
+     * its send buffer (the common case during a handshake) is always
+     * writable, and the watcher fires immediately on every iteration even
+     * when the real wait is for the peer's TLS bytes. So:
+     *
+     *   - We suspend on `onReadable` (the realistic blocker — the server
+     *     hello or finished arriving).
+     *   - And on a small exponential-backoff timer (1ms -> 50ms cap) so we
+     *     also retry when the handshake actually wanted writable progress.
+     *
+     * Whichever fires first wakes the fiber, the crypto call is re-tried,
+     * and we suspend again until the deadline elapses.
      */
     private function cryptoLoop(int $cryptoMethod, int $timeout): bool
     {
         $deadline = $timeout > 0 ? microtime(true) + $timeout : null;
+        $backoff = 0.001; // 1ms — grows up to 50ms
 
         while (true) {
             $this->installHandler();
@@ -249,41 +291,34 @@ final class WorkermanTransport implements Transport
             if ($r === false) {
                 return false;
             }
-            // $r === 0 — would block. Wait for readable OR writable, then retry.
+            // $r === 0 — would block. Wait for readable OR backoff timer.
             $remaining = $deadline === null ? null : ($deadline - microtime(true));
             if ($remaining !== null && $remaining <= 0) {
                 $this->connectError = ['errno' => 0, 'errstr' => 'TLS handshake timed out'];
                 return false;
             }
 
+            $delay = $backoff;
+            if ($remaining !== null && $delay > $remaining) {
+                $delay = $remaining;
+            }
             $suspension = EventLoop::getSuspension();
             $readId = EventLoop::onReadable($this->socket, static function () use ($suspension): void {
                 $suspension->resume('readable');
             });
-            $writeId = EventLoop::onWritable($this->socket, static function () use ($suspension): void {
-                $suspension->resume('writable');
+            $timerId = EventLoop::delay($delay > 0 ? $delay : 0.001, static function () use ($suspension): void {
+                $suspension->resume('backoff');
             });
-            $timerId = null;
-            if ($remaining !== null) {
-                $delay = $remaining > 0 ? $remaining : 0.001;
-                $timerId = EventLoop::delay($delay, static function () use ($suspension): void {
-                    $suspension->resume('timeout');
-                });
-            }
             try {
-                $signal = $suspension->suspend();
+                $suspension->suspend();
             } finally {
                 EventLoop::cancel($readId);
-                EventLoop::cancel($writeId);
-                if ($timerId !== null) {
-                    EventLoop::cancel($timerId);
-                }
+                EventLoop::cancel($timerId);
             }
-            if ($signal === 'timeout') {
-                $this->connectError = ['errno' => 0, 'errstr' => 'TLS handshake timed out'];
-                return false;
-            }
-            // loop: try crypto again on either readable or writable
+            // Exponential backoff, capped at 50ms — keeps CPU low even if
+            // the kernel never signals readable (rare but possible during a
+            // write-blocked handshake).
+            $backoff = min($backoff * 2, 0.05);
         }
     }
 

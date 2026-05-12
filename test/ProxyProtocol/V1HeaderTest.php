@@ -101,6 +101,24 @@ final class V1HeaderTest extends TestCase
         self::assertNull(Configurator::disabled());
     }
 
+    public function testAutoDetectRejectsMalformedSourceIp(): void
+    {
+        $this->expectException(Exception::class);
+        $this->expectExceptionMessage('Source IP not-an-ip is neither valid IPv4 nor IPv6');
+
+        // Without explicit family, malformed IPs must error rather than
+        // silently emit "PROXY UNKNOWN\r\n" — that path is V1Header::unknown().
+        V1Header::auto('not-an-ip', '10.0.0.1', 80, 25);
+    }
+
+    public function testExplicitUnknownFamilyStillAllowsAnyInputs(): void
+    {
+        // Spec-mandated no-peer-info form: caller must pass FAMILY_UNKNOWN
+        // explicitly. We don't validate the placeholder IPs in that case.
+        $header = new V1Header('0.0.0.0', '0.0.0.0', 0, 0, V1Header::FAMILY_UNKNOWN);
+        self::assertSame("PROXY UNKNOWN\r\n", $header->build());
+    }
+
     public function testBuiltHeaderRespectsSpecMaxLength(): void
     {
         // longest realistic IPv6 produces ~ 76 bytes, well under 107.
