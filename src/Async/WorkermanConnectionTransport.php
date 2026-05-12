@@ -110,17 +110,30 @@ final class WorkermanConnectionTransport implements Transport
         $this->assertInsideFiber(__METHOD__);
         self::ensureWorkermanEventLoop();
 
-        // Defer implicit TLS until after PROXY header has shipped.
+        // PHPMailer prepends `ssl://` (or `tls://`) onto the host when SMTPSecure
+        // is set. Three paths:
+        //   1. ssl/tls scheme + PROXY header  -> strip scheme, open plain TCP,
+        //                                       write PROXY first, then upgrade
+        //                                       manually via cryptoLoop().
+        //   2. ssl/tls scheme + no PROXY      -> let Workerman do the handshake
+        //                                       natively by passing the scheme
+        //                                       through (NOT `tcp://`).
+        //   3. no scheme                       -> plain TCP via `tcp://host:port`.
         $deferredCryptoMethod = null;
+        $connectionUri = 'tcp://' . $host . ':' . $port;
         if (preg_match('#^(ssl|tls)://(.+)$#i', $host, $matches) === 1) {
+            $scheme = strtolower($matches[1]);
+            $bareHost = $matches[2];
             if ($this->proxyProtocolHeader !== null && $this->proxyProtocolHeader !== '') {
-                $host = $matches[2];
+                $connectionUri = 'tcp://' . $bareHost . ':' . $port;
                 $deferredCryptoMethod = $this->resolveImplicitCryptoMethod();
+            } else {
+                $connectionUri = $scheme . '://' . $bareHost . ':' . $port;
             }
         }
 
         try {
-            $this->conn = new AsyncTcpConnection('tcp://' . $host . ':' . $port, $contextOptions);
+            $this->conn = new AsyncTcpConnection($connectionUri, $contextOptions);
         } catch (Throwable $t) {
             $this->connectError = ['errno' => 0, 'errstr' => $t->getMessage()];
             $this->conn = null;

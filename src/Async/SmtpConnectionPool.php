@@ -71,6 +71,13 @@ final class SmtpConnectionPool
     private float $idleTimeoutSec;
     private bool $useNoopHealthCheck;
 
+    // --- counters (read-only metrics for ops / smoke tests) ---
+
+    private int $acquireHits = 0;
+    private int $acquireMisses = 0;
+    private int $releases = 0;
+    private int $evictions = 0;
+
     public function __construct(
         int $maxPerKey = 8,
         float $idleTimeoutSec = 60.0,
@@ -119,9 +126,11 @@ final class SmtpConnectionPool
                     continue;
                 }
             }
+            $this->acquireHits++;
             return $smtp;
         }
 
+        $this->acquireMisses++;
         return $newFactory();
     }
 
@@ -156,10 +165,12 @@ final class SmtpConnectionPool
             array_shift($this->idleSince[$key]);
             if ($oldest !== null) {
                 $this->safeClose($oldest);
+                $this->evictions++;
             }
         }
         $this->idle[$key][] = $smtp;
         $this->idleSince[$key][] = microtime(true);
+        $this->releases++;
     }
 
     /**
@@ -189,6 +200,39 @@ final class SmtpConnectionPool
             $sum += count($list);
         }
         return $sum;
+    }
+
+    /**
+     * Cumulative pool counters since construction. Useful for ops dashboards
+     * and smoke tests. Fields:
+     *
+     *   - acquireHits   : pool hits that returned a healthy session
+     *   - acquireMisses : pool misses that called the new-factory closure
+     *   - releases      : entries handed back via release()
+     *   - evictions     : entries closed because the per-key cap overflowed
+     *   - hitRatio      : acquireHits / max(1, acquireHits + acquireMisses)
+     *   - idleNow       : current total idle entries across all keys
+     *
+     * @return array{
+     *     acquireHits: int,
+     *     acquireMisses: int,
+     *     releases: int,
+     *     evictions: int,
+     *     hitRatio: float,
+     *     idleNow: int,
+     * }
+     */
+    public function stats(): array
+    {
+        $total = $this->acquireHits + $this->acquireMisses;
+        return [
+            'acquireHits'   => $this->acquireHits,
+            'acquireMisses' => $this->acquireMisses,
+            'releases'      => $this->releases,
+            'evictions'     => $this->evictions,
+            'hitRatio'      => $total === 0 ? 0.0 : $this->acquireHits / $total,
+            'idleNow'       => $this->idleCount(),
+        ];
     }
 
     /**

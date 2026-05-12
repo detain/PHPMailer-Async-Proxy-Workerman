@@ -144,6 +144,40 @@ final class SmtpConnectionPoolTest extends TestCase
         }
     }
 
+    public function testStatsCountsHitsMissesReleasesAndEvictions(): void
+    {
+        $pool = new SmtpConnectionPool(maxPerKey: 1);
+
+        // Miss — empty pool calls factory.
+        $a = new FakePoolSmtp(connected: true);
+        $pool->acquireOrNew('k', static fn() => $a);
+        // Release back.
+        $pool->release('k', $a);
+        // Hit — pop the released entry.
+        $pool->acquireOrNew('k', static fn() => $a);
+        // Release back again.
+        $pool->release('k', $a);
+        // Force overflow eviction: release a different SMTP under same key.
+        $b = new FakePoolSmtp(connected: true);
+        $pool->release('k', $b);
+
+        $stats = $pool->stats();
+        self::assertSame(1, $stats['acquireHits']);
+        self::assertSame(1, $stats['acquireMisses']);
+        self::assertSame(3, $stats['releases']);
+        self::assertSame(1, $stats['evictions']);
+        self::assertSame(0.5, $stats['hitRatio']);
+        self::assertSame(1, $stats['idleNow']);
+    }
+
+    public function testStatsHitRatioIsZeroBeforeAnyAcquire(): void
+    {
+        $stats = (new SmtpConnectionPool())->stats();
+        self::assertSame(0.0, $stats['hitRatio']);
+        self::assertSame(0, $stats['acquireHits']);
+        self::assertSame(0, $stats['acquireMisses']);
+    }
+
     public function testKeysExposesActiveKeys(): void
     {
         $pool = new SmtpConnectionPool();
