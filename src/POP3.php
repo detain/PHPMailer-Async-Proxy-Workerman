@@ -21,6 +21,9 @@
 
 namespace PHPMailer\PHPMailer;
 
+use PHPMailer\PHPMailer\Async\StreamTransport;
+use PHPMailer\PHPMailer\Async\Transport;
+
 /**
  * PHPMailer POP-Before-SMTP Authentication Class.
  * Specifically for PHPMailer to use for RFC1939 POP-before-SMTP authentication.
@@ -113,9 +116,22 @@ class POP3
     /**
      * Resource handle for the POP3 connection socket.
      *
-     * @var resource
+     * Populated from {@see Transport::getResource()} for backward compatibility
+     * with code that pokes this property directly. Async transports
+     * (WorkermanTransport) return null here — use {@see getTransport()} for
+     * those.
+     *
+     * @var resource|null|false
      */
     protected $pop_conn;
+
+    /**
+     * Async-capable byte transport. Lazily initialised to {@see StreamTransport}
+     * (blocking) for upstream behaviour parity; replace via
+     * {@see setTransport()} with the Workerman/Revolt transport when running
+     * inside an event loop.
+     */
+    protected ?Transport $transport = null;
 
     /**
      * Are we connected?
@@ -249,41 +265,29 @@ class POP3
             return true;
         }
 
-        //On Windows this will raise a PHP Warning error if the hostname doesn't exist.
-        //Rather than suppress it with @fsockopen, capture it cleanly instead
-        set_error_handler(function () {
-            call_user_func_array([$this, 'catchWarning'], func_get_args());
-        });
-
         if (false === $port) {
             $port = static::DEFAULT_PORT;
         }
 
-        //Connect to the POP3 server
-        $errno = 0;
-        $errstr = '';
-        $this->pop_conn = fsockopen(
-            $host, //POP3 Host
-            $port, //Port #
-            $errno, //Error Number
-            $errstr, //Error Message
-            $tval
-        ); //Timeout (seconds)
-        //Restore the error handler
-        restore_error_handler();
-
-        //Did we connect?
-        if (false === $this->pop_conn) {
-            //It would appear not...
+        $transport = $this->getTransport();
+        if (!$transport->connect((string) $host, (int) $port, (int) $tval)) {
+            $err = $transport->getConnectError();
             $this->setError(
-                "Failed to connect to server $host on port $port. errno: $errno; errstr: $errstr"
+                sprintf(
+                    'Failed to connect to server %s on port %d. errno: %d; errstr: %s',
+                    $host,
+                    (int) $port,
+                    $err['errno'],
+                    $err['errstr']
+                )
             );
-
             return false;
         }
+        $transport->setReadTimeout((int) $tval);
 
-        //Increase the stream time-out
-        stream_set_timeout($this->pop_conn, $tval, 0);
+        // Keep the legacy $pop_conn property in sync for callers that poke it
+        // directly (e.g. test fixtures). Async transports return null here.
+        $this->pop_conn = $transport->getResource();
 
         //Get the POP3 server response
         $pop3_response = $this->getResponse();
@@ -296,6 +300,39 @@ class POP3
         }
 
         return false;
+    }
+
+    /**
+     * Inject a custom byte-level transport (e.g. WorkermanTransport).
+     */
+    public function setTransport(Transport $transport): void
+    {
+        $this->transport = $transport;
+        $transport->setErrorHandler($this->buildErrorHandlerClosure());
+    }
+
+    /**
+     * Get the active transport, lazily creating a blocking {@see StreamTransport}
+     * if none has been injected.
+     */
+    public function getTransport(): Transport
+    {
+        if ($this->transport === null) {
+            $this->transport = new StreamTransport();
+            $this->transport->setErrorHandler($this->buildErrorHandlerClosure());
+        }
+        return $this->transport;
+    }
+
+    /**
+     * Closure forwarder that lets the transport call back into our protected
+     * {@see catchWarning()} method. Mirrors the pattern used in SMTP.
+     */
+    private function buildErrorHandlerClosure(): \Closure
+    {
+        return function ($errno, $errmsg, $errfile = '', $errline = 0): void {
+            $this->catchWarning($errno, $errmsg, $errfile, $errline);
+        };
     }
 
     /**
@@ -341,7 +378,9 @@ class POP3
     public function disconnect()
     {
         // If could not connect at all, no need to disconnect
-        if ($this->pop_conn === false) {
+        if ($this->transport === null || !$this->transport->isOpen()) {
+            $this->connected = false;
+            $this->pop_conn = false;
             return;
         }
 
@@ -358,7 +397,7 @@ class POP3
         //The QUIT command may cause the daemon to exit, which will kill our connection
         //So ignore errors here
         try {
-            @fclose($this->pop_conn);
+            $this->transport->close();
         } catch (Exception $e) {
             //Do nothing
         }
@@ -377,7 +416,7 @@ class POP3
      */
     protected function getResponse($size = 128)
     {
-        $response = fgets($this->pop_conn, $size);
+        $response = $this->transport === null ? '' : $this->transport->readLine((int) $size);
         if ($this->do_debug >= self::DEBUG_SERVER) {
             echo 'Server -> Client: ', $response;
         }
@@ -394,15 +433,14 @@ class POP3
      */
     protected function sendString($string)
     {
-        if ($this->pop_conn) {
-            if ($this->do_debug >= self::DEBUG_CLIENT) { //Show client messages when debug >= 2
-                echo 'Client -> Server: ', $string;
-            }
-
-            return fwrite($this->pop_conn, $string, strlen($string));
+        if ($this->transport === null || !$this->transport->isOpen()) {
+            return 0;
         }
-
-        return 0;
+        if ($this->do_debug >= self::DEBUG_CLIENT) { //Show client messages when debug >= 2
+            echo 'Client -> Server: ', $string;
+        }
+        $written = $this->transport->write((string) $string);
+        return $written === false ? 0 : $written;
     }
 
     /**

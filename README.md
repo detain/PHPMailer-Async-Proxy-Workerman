@@ -36,7 +36,10 @@ is untouched.
 composer require mailbaby/phpmailer-async-proxy-workerman
 ```
 
-Requirements: PHP 8.1+ (uses Fibers), `ext-sockets`, `ext-openssl`.
+Requirements: PHP 8.1+ (uses Fibers). `ext-openssl` for TLS/STARTTLS;
+`ext-sockets` is optional — when present, `WorkermanTransport` uses it to
+surface specific async-connect errors via `SO_ERROR`. Everything works
+without it.
 
 ## Quick start (drop-in)
 

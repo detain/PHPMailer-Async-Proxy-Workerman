@@ -1,5 +1,32 @@
 # PHPMailer Change Log
 
+## Version 8.0.0-async.1 (May 2026)
+
+Follow-up improvements after a post-merge review of `8.0.0-async.0`:
+
+* **POP3 now routes through the Transport abstraction.** `connect()`,
+  `getResponse()`, `sendString()`, and `disconnect()` no longer call
+  `fsockopen`/`fgets`/`fwrite`/`fclose` directly; injecting a
+  `WorkermanTransport` makes POP-before-SMTP authentication async-capable
+  on the same terms as SMTP. The existing upstream POP3 test group
+  (3 tests) still passes against the StreamTransport default.
+* **`SMTP::connected()` restored upstream's `close()`-on-EOF side effect.**
+  When the connection is at EOF, the legacy `SMTP NOTICE: EOF caught while
+  checking if connected` debug line + `close()` cleanup now fire again.
+* Added two example scripts:
+  * `examples/workerman-async.phps` — full Workerman worker boot wiring
+    `WorkermanTransport` + `FiberRunner::run()` for non-blocking send.
+  * `examples/proxy-protocol.phps` — v1 / v2 / UNKNOWN / disabled
+    configurations side by side.
+* Migrated `phpunit.xml.dist` to the PHPUnit 9.3 schema — kills the
+  `Your XML configuration validates against a deprecated schema` warning
+  on every run.
+* README clarified that `ext-sockets` is optional, not required (the async
+  transport gracefully degrades when it's missing — it just can't surface
+  specific async-connect errors via `SO_ERROR`).
+* SECURITY.md now has a fork-specific reporting section pointing at the
+  maintainer's email + the repo's GitHub Security Advisories flow.
+
 ## Version 8.0.0-async.0 (May 2026) — Workerman + PROXY-protocol fork
 
 First release of the `mailbaby/phpmailer-async-proxy-workerman` fork. Base is
