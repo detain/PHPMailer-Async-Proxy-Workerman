@@ -21,6 +21,9 @@
 
 namespace PHPMailer\PHPMailer;
 
+use PHPMailer\PHPMailer\Async\StreamTransport;
+use PHPMailer\PHPMailer\Async\Transport;
+
 /**
  * PHPMailer RFC821 SMTP email transport class.
  * Implements RFC 821 SMTP commands and provides some utility methods for sending mail to an SMTP server.
@@ -237,6 +240,16 @@ class SMTP
     protected $smtp_conn;
 
     /**
+     * Async-capable byte-level transport. All socket I/O is delegated here so that
+     * a Workerman transport can yield to an event-loop without changing the public
+     * SMTP API. Lazily initialised to {@see StreamTransport} (blocking) for
+     * upstream-PHPMailer behaviour parity; replace with
+     * {@see \PHPMailer\PHPMailer\Async\WorkermanTransport} (or any custom impl) via
+     * {@see setTransport()} when running inside a Workerman worker.
+     */
+    protected ?Transport $transport = null;
+
+    /**
      * Error information, if any, for the last SMTP command.
      *
      * @var array
@@ -395,6 +408,32 @@ class SMTP
     }
 
     /**
+     * Inject a custom byte-level transport (e.g. a Workerman-backed async one).
+     *
+     * Must be called before {@see connect()} — replacing the transport on an open
+     * connection is not supported.
+     */
+    public function setTransport(Transport $transport): void
+    {
+        $this->transport = $transport;
+        $transport->setErrorHandler([$this, 'errorHandler']);
+    }
+
+    /**
+     * Get the active transport, lazily creating a blocking {@see StreamTransport}
+     * if none has been injected. Subclasses may override to pick a different
+     * default (e.g. always Workerman when running under `Workerman\Worker`).
+     */
+    public function getTransport(): Transport
+    {
+        if ($this->transport === null) {
+            $this->transport = new StreamTransport();
+            $this->transport->setErrorHandler([$this, 'errorHandler']);
+        }
+        return $this->transport;
+    }
+
+    /**
      * Create connection to the SMTP server.
      *
      * @param string $host    SMTP server IP or host name
@@ -406,49 +445,15 @@ class SMTP
      */
     protected function getSMTPConnection($host, $port = null, $timeout = 30, $options = [])
     {
-        static $streamok;
-        //This is enabled by default since 5.0.0 but some providers disable it
-        //Check this once and cache the result
-        if (null === $streamok) {
-            $streamok = function_exists('stream_socket_client');
+        if (empty($port)) {
+            $port = self::DEFAULT_PORT;
         }
 
-        $errno = 0;
-        $errstr = '';
-        if ($streamok) {
-            $socket_context = stream_context_create($options);
-            set_error_handler(function () {
-                call_user_func_array([$this, 'errorHandler'], func_get_args());
-            });
-            $connection = stream_socket_client(
-                $host . ':' . $port,
-                $errno,
-                $errstr,
-                $timeout,
-                STREAM_CLIENT_CONNECT,
-                $socket_context
-            );
-        } else {
-            //Fall back to fsockopen which should work in more places, but is missing some features
-            $this->edebug(
-                'Connection: stream_socket_client not available, falling back to fsockopen',
-                self::DEBUG_CONNECTION
-            );
-            set_error_handler(function () {
-                call_user_func_array([$this, 'errorHandler'], func_get_args());
-            });
-            $connection = fsockopen(
-                $host,
-                $port,
-                $errno,
-                $errstr,
-                $timeout
-            );
-        }
-        restore_error_handler();
-
-        //Verify we connected properly
-        if (!is_resource($connection)) {
+        $transport = $this->getTransport();
+        if (!$transport->connect((string) $host, (int) $port, (int) $timeout, is_array($options) ? $options : [])) {
+            $err = $transport->getConnectError();
+            $errno = $err['errno'];
+            $errstr = $err['errstr'];
             $this->setError(
                 'Failed to connect to server',
                 '',
@@ -464,18 +469,10 @@ class SMTP
             return false;
         }
 
-        //SMTP server can take longer to respond, give longer timeout for first read
-        //Windows does not have support for this timeout function
-        if (strpos(PHP_OS, 'WIN') !== 0) {
-            $max = (int)ini_get('max_execution_time');
-            //Don't bother if unlimited, or if set_time_limit is disabled
-            if (0 !== $max && $timeout > $max && strpos(ini_get('disable_functions'), 'set_time_limit') === false) {
-                @set_time_limit($timeout);
-            }
-            stream_set_timeout($connection, $timeout, 0);
-        }
-
-        return $connection;
+        //Hand back the live resource so subclasses that poke `$this->smtp_conn`
+        //(e.g. legacy PROXY-protocol shims) keep working byte-for-byte.
+        $resource = $transport->getResource();
+        return $resource === null ? false : $resource;
     }
 
     /**
@@ -501,18 +498,9 @@ class SMTP
             $crypto_method |= STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT;
         }
 
-        //Begin encrypted connection
-            set_error_handler(function () {
-                call_user_func_array([$this, 'errorHandler'], func_get_args());
-            });
-        $crypto_ok = stream_socket_enable_crypto(
-            $this->smtp_conn,
-            true,
-            $crypto_method
-        );
-        restore_error_handler();
-
-        return (bool) $crypto_ok;
+        //Begin encrypted connection — delegated to the transport so an async
+        //implementation can drive a non-blocking handshake.
+        return $this->getTransport()->enableCrypto($crypto_method, (int) $this->Timeout);
     }
 
     /**
@@ -733,23 +721,25 @@ class SMTP
      */
     public function connected()
     {
-        if (is_resource($this->smtp_conn)) {
-            $sock_status = stream_get_meta_data($this->smtp_conn);
-            if ($sock_status['eof']) {
-                //The socket is valid but we are not connected
-                $this->edebug(
-                    'SMTP NOTICE: EOF caught while checking if connected',
-                    self::DEBUG_CLIENT
-                );
-                $this->close();
+        if ($this->transport === null) {
+            return false;
+        }
+        if ($this->transport->getResource() === null && !is_resource($this->smtp_conn)) {
+            return false;
+        }
+        $sock_status = $this->transport->getMetadata();
+        if (!empty($sock_status['eof'])) {
+            //The socket is valid but we are not connected
+            $this->edebug(
+                'SMTP NOTICE: EOF caught while checking if connected',
+                self::DEBUG_CLIENT
+            );
+            $this->close();
 
-                return false;
-            }
-
-            return true; //everything looks good
+            return false;
         }
 
-        return false;
+        return true;
     }
 
     /**
@@ -762,9 +752,15 @@ class SMTP
     {
         $this->server_caps = null;
         $this->helo_rply = null;
-        if (is_resource($this->smtp_conn)) {
-            //Close the connection and cleanup
-            fclose($this->smtp_conn);
+        $hadConnection = is_resource($this->smtp_conn)
+            || ($this->transport !== null && $this->transport->isOpen());
+        if ($this->transport !== null) {
+            $this->transport->close();
+        } elseif (is_resource($this->smtp_conn)) {
+            //Defensive: a subclass set $smtp_conn directly without going through a transport
+            @fclose($this->smtp_conn);
+        }
+        if ($hadConnection) {
             $this->smtp_conn = null; //Makes for cleaner serialization
             $this->edebug('Connection: closed', self::DEBUG_CONNECTION);
         }
@@ -1249,13 +1245,8 @@ class SMTP
         } else {
             $this->edebug('CLIENT -> SERVER: ' . $data, self::DEBUG_CLIENT);
         }
-        set_error_handler(function () {
-            call_user_func_array([$this, 'errorHandler'], func_get_args());
-        });
-        $result = fwrite($this->smtp_conn, $data);
-        restore_error_handler();
 
-        return $result;
+        return $this->getTransport()->write((string) $data);
     }
 
     /**
@@ -1339,29 +1330,30 @@ class SMTP
      */
     protected function get_lines()
     {
-        //If the connection is bad, give up straight away
-        if (!is_resource($this->smtp_conn)) {
+        if ($this->transport === null || !$this->transport->isOpen()) {
             return '';
         }
+        $transport = $this->transport;
         $data = '';
         $endtime = 0;
-        stream_set_timeout($this->smtp_conn, $this->Timeout);
+        $transport->setReadTimeout((int) $this->Timeout);
         if ($this->Timelimit > 0) {
-            $endtime = time() + $this->Timelimit;
+            $endtime = time() + (int) $this->Timelimit;
         }
-        $selR = [$this->smtp_conn];
-        $selW = null;
-        while (is_resource($this->smtp_conn) && !feof($this->smtp_conn)) {
-            //Must pass vars in here as params are by reference
+        while ($transport->isOpen()) {
+            $transport->clearLastWarning();
             //solution for signals inspired by https://github.com/symfony/symfony/pull/6540
-            set_error_handler(function () {
-                call_user_func_array([$this, 'errorHandler'], func_get_args());
-            });
-            $n = stream_select($selR, $selW, $selW, $this->Timelimit);
-            restore_error_handler();
+            $ready = $transport->waitReadable((int) $this->Timelimit);
 
-            if ($n === false) {
-                $message = $this->getError()['detail'];
+            if ($ready === null) {
+                $warning = $transport->getLastWarning();
+                $message = $warning['errstr'];
+                if ($message === '') {
+                    //Surface the latest SMTP-level error detail (the previous error-handler
+                    //call may have populated this rather than the per-warning sink).
+                    $err = $this->getError();
+                    $message = $err['detail'] ?? '';
+                }
 
                 $this->edebug(
                     'SMTP -> get_lines(): select failed (' . $message . ')',
@@ -1391,7 +1383,7 @@ class SMTP
                 break;
             }
 
-            if (!$n) {
+            if ($ready === false) {
                 $this->edebug(
                     'SMTP -> get_lines(): select timed-out in (' . $this->Timelimit . ' sec)',
                     self::DEBUG_LOWLEVEL
@@ -1400,7 +1392,7 @@ class SMTP
             }
 
             //Deliberate noise suppression - errors are handled afterwards
-            $str = @fgets($this->smtp_conn, self::MAX_REPLY_LENGTH);
+            $str = $transport->readLine(self::MAX_REPLY_LENGTH);
             $this->edebug('SMTP INBOUND: "' . trim($str) . '"', self::DEBUG_LOWLEVEL);
             $data .= $str;
             //If response is only 3 chars (not valid, but RFC5321 S4.2 says it must be handled),
@@ -1410,8 +1402,8 @@ class SMTP
                 break;
             }
             //Timed-out? Log and break
-            $info = stream_get_meta_data($this->smtp_conn);
-            if ($info['timed_out']) {
+            $info = $transport->getMetadata();
+            if (!empty($info['timed_out'])) {
                 $this->edebug(
                     'SMTP -> get_lines(): stream timed-out (' . $this->Timeout . ' sec)',
                     self::DEBUG_LOWLEVEL
