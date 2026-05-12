@@ -11,6 +11,7 @@ CLAUDE.md
 
 docs/*
 !docs/README.md
+!docs/UPSTREAM.md
 test/message.txt
 test/testbootstrap.php
 build/

@@ -1,5 +1,54 @@
 # PHPMailer Change Log
 
+## Version 8.0.0-async.0 (May 2026) — Workerman + PROXY-protocol fork
+
+First release of the `mailbaby/phpmailer-async-proxy-workerman` fork. Base is
+upstream PHPMailer 7.0.2; only the SMTP transport layer and the PROXY-protocol
+support are new. Everything else (MIME, attachments, DKIM, S/MIME, OAuth,
+encodings, address parsing, localization) is unchanged from upstream.
+
+### Breaking changes
+* **PHP 8.1 minimum.** Drops support for PHP 5.5–8.0 (Fibers + Revolt EventLoop
+  need PHP 8.1). The PHPCompatibility ruleset is removed from phpcs.
+* `phpmailer/phpmailer` -> `mailbaby/phpmailer-async-proxy-workerman` (the
+  PSR-4 namespace `PHPMailer\PHPMailer\` is preserved, so existing `use`
+  statements continue to work).
+
+### Added
+* `PHPMailer\PHPMailer\Async\Transport` — byte-level transport contract.
+* `PHPMailer\PHPMailer\Async\StreamTransport` — blocking adapter, byte-for-byte
+  equivalent to upstream PHPMailer's SMTP socket flow. Used as the default and
+  for backward compatibility with subclasses that poke `$this->smtp_conn`.
+* `PHPMailer\PHPMailer\Async\WorkermanTransport` — non-blocking transport on top
+  of `Revolt\EventLoop` + PHP Fibers. Yields to the event loop on every read /
+  write / TLS handshake / connect.
+* `PHPMailer\PHPMailer\Async\FiberRunner` — bridge that lets the synchronous
+  SMTP API surface drive async work whether inside an event-loop or not.
+* `PHPMailer\PHPMailer\ProxyProtocol\V1Header` — text-mode PROXY v1 header.
+* `PHPMailer\PHPMailer\ProxyProtocol\V2Header` — binary PROXY v2 frame, with
+  `parse()` for round-trip use.
+* `PHPMailer\PHPMailer\ProxyProtocol\Configurator` — fluent factory:
+  `Configurator::v1(...)`, `::v2(...)`, `::disabled()`, `::ofVersion(...)`.
+* New public methods on `SMTP`: `setTransport()`, `getTransport()`,
+  `enableProxyProtocol()`, `disableProxyProtocol()`, `getProxyProtocolBuilder()`.
+* New public method on `PHPMailer`: `setProxyProtocol(?HeaderBuilder)`.
+
+### Tests + CI
+* Async transport coverage: `test/Async/AsyncSmtpTest`, `AuthAsyncTest`,
+  `FiberRunnerTest`, `StartTlsAsyncTest`, `TransportParityTest`,
+  `MockSmtpServer` fixture.
+* PROXY protocol coverage: `test/ProxyProtocol/V1HeaderTest`, `V2HeaderTest`,
+  `SmtpIntegrationTest`.
+* CI matrix tightened to PHP 8.1 / 8.2 / 8.3 / 8.4; split into `test-sync`
+  (upstream PHPMailer tests via postfix/smtp-sink) and `test-async`
+  (in-process pcntl_fork'd listeners).
+* New `static-analysis.yml` workflow runs PHPStan level 5 over the new code.
+
+### Upstream tracking
+Upstream changelog entries below this line are preserved unchanged.
+
+---
+
 ## Version 7.0.2 (January 9th, 2026)
 * Fixes for sendmail parameter problems in WordPress, thanks to @SirLouen
 * Reduce memory consumption when sending large attachments by @RobinvanderVliet

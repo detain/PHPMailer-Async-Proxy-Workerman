@@ -1,3 +1,43 @@
+# Upgrading from upstream PHPMailer 7.0.x to phpmailer-async-proxy-workerman 8.0.0-async.0
+
+The fork keeps the entire upstream PHPMailer API. Existing code that does
+`use PHPMailer\PHPMailer\PHPMailer;` and `new PHPMailer(true)` continues to
+work without modification.
+
+What you have to know:
+
+1. **PHP 8.1+ only.** Drop PHP 5.5 / 7.x / 8.0 support before installing this
+   fork. Bring `composer.json` to `"php": "^8.1"` and remove any
+   PHPCompatibility / phan-target-php-version-7.x configs.
+
+2. **Composer name change.** Replace
+   `"phpmailer/phpmailer": "..."` with
+   `"mailbaby/phpmailer-async-proxy-workerman": "^8.0.0-async"`. The PSR-4
+   namespace `PHPMailer\PHPMailer\` is unchanged, so `use` statements stay
+   the same.
+
+3. **Subclasses that poke `$this->smtp_conn` directly will continue to work**
+   — the default `StreamTransport` keeps the property populated with a live
+   PHP stream resource exactly like upstream did. If you've subclassed `SMTP`
+   and overridden `getSMTPConnection()` (e.g. the legacy
+   `app/Mail/ProxySMTP.php` shim in `mailbaby-mail-api`), prefer the new
+   `enableProxyProtocol(HeaderBuilder)` API over the manual fwrite — it's
+   transport-agnostic and works under the async transport too.
+
+4. **Async is opt-in.** Calling `$smtp->setTransport(new WorkermanTransport())`
+   before `$mail->send()` turns on the non-blocking path. Outside a worker
+   the transport works just fine via `FiberRunner`'s private event loop, so
+   you can flip the flag in tests without setting up Workerman.
+
+5. **No upstream signatures changed.** `connect()`, `hello()`, `authenticate()`,
+   `mail()`, `recipient()`, `data()`, `quit()`, `close()` still return
+   `bool|string` exactly as documented; the async path is invisible at the
+   API boundary.
+
+See `README.md` for usage and `changelog.md` for the full list of additions.
+
+---
+
 # Upgrading from PHPMailer 5.2 to 6.0
 
 PHPMailer 6.0 is a major update, breaking backward compatibility.
