@@ -57,6 +57,23 @@ final class StreamTransport implements Transport
             $streamOk = function_exists('stream_socket_client');
         }
 
+        // PHPMailer prefixes `ssl://` (or `tls://`) onto the host when
+        // SMTPSecure='ssl' so stream_socket_client() performs an implicit TLS
+        // handshake before returning. That means without intervention the
+        // PROXY header lands AFTER TLS is already negotiated — backends on
+        // port 465 expect PROXY before any other byte. When a PROXY header is
+        // configured, strip any TLS scheme, open plain TCP, write the header,
+        // then upgrade with stream_socket_enable_crypto() — matches what we
+        // do for STARTTLS.
+        $deferredCryptoMethod = null;
+        $bareHost = $host;
+        if (preg_match('#^(ssl|tls)://(.+)$#i', $host, $matches) === 1) {
+            if ($this->proxyProtocolHeader !== null && $this->proxyProtocolHeader !== '') {
+                $bareHost = $matches[2];
+                $deferredCryptoMethod = self::resolveImplicitCryptoMethod();
+            }
+        }
+
         $errno = 0;
         $errstr = '';
 
@@ -65,7 +82,7 @@ final class StreamTransport implements Transport
             if ($streamOk) {
                 $context = stream_context_create($contextOptions);
                 $this->socket = @stream_socket_client(
-                    $host . ':' . $port,
+                    ($deferredCryptoMethod !== null ? 'tcp://' . $bareHost : $host) . ':' . $port,
                     $errno,
                     $errstr,
                     (float) $timeout,
@@ -73,7 +90,7 @@ final class StreamTransport implements Transport
                     $context
                 );
             } else {
-                $this->socket = @fsockopen($host, $port, $errno, $errstr, (float) $timeout);
+                $this->socket = @fsockopen($bareHost, $port, $errno, $errstr, (float) $timeout);
             }
         } finally {
             $this->restoreHandler();
@@ -116,7 +133,36 @@ final class StreamTransport implements Transport
             }
         }
 
+        // Caller wanted implicit TLS (ssl://...) and we deferred so the PROXY
+        // header could go first. Upgrade now.
+        if ($deferredCryptoMethod !== null) {
+            if (!$this->enableCrypto($deferredCryptoMethod, $timeout)) {
+                $this->connectError = [
+                    'errno' => 0,
+                    'errstr' => 'Implicit TLS handshake failed after PROXY header',
+                ];
+                $this->close();
+                return false;
+            }
+        }
+
         return true;
+    }
+
+    /**
+     * Resolve the STREAM_CRYPTO_METHOD_* bitmask to use when upgrading to
+     * implicit TLS after a deferred ssl:// connect.
+     */
+    private static function resolveImplicitCryptoMethod(): int
+    {
+        $method = STREAM_CRYPTO_METHOD_TLS_CLIENT;
+        if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) {
+            $method |= STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
+        }
+        if (defined('STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT')) {
+            $method |= STREAM_CRYPTO_METHOD_TLSv1_1_CLIENT;
+        }
+        return $method;
     }
 
     public function close(): void

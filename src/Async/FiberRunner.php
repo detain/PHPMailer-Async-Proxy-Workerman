@@ -63,7 +63,17 @@ final class FiberRunner
     }
 
     /**
-     * Drive a private Revolt run() for the duration of $work.
+     * Drive an isolated Revolt run() for the duration of $work.
+     *
+     * Creates a fresh driver via Revolt's default DriverFactory and installs
+     * it as the global driver while $work runs. This keeps any watchers,
+     * timers, or deferreds the caller has *already* registered on the
+     * outer (not-yet-running) driver out of our event-loop tick — and our
+     * `stop()` does not terminate the caller's pending work. The previous
+     * global driver is restored in `finally`, including on exceptions.
+     *
+     * The $driver argument is only used to confirm "no loop is running" at
+     * the call site; we never schedule on it.
      *
      * @template T
      * @param Closure(): T $work
@@ -71,34 +81,42 @@ final class FiberRunner
      */
     private static function runWithPrivateLoop(EventLoop\Driver $driver, Closure $work)
     {
-        $result = null;
-        $error = null;
-        $done = false;
+        $previousDriver = $driver;
+        $isolated = (new EventLoop\DriverFactory())->create();
+        EventLoop::setDriver($isolated);
 
-        $fiber = new Fiber(function () use ($work, &$result, &$error, &$done, $driver): void {
-            try {
-                $result = $work();
-            } catch (Throwable $t) {
-                $error = $t;
-            } finally {
-                $done = true;
-                $driver->stop();
+        try {
+            $result = null;
+            $error = null;
+            $done = false;
+
+            $fiber = new Fiber(function () use ($work, &$result, &$error, &$done, $isolated): void {
+                try {
+                    $result = $work();
+                } catch (Throwable $t) {
+                    $error = $t;
+                } finally {
+                    $done = true;
+                    $isolated->stop();
+                }
+            });
+
+            $isolated->queue(static function () use ($fiber): void {
+                $fiber->start();
+            });
+
+            $isolated->run();
+
+            if (!$done) {
+                throw new \RuntimeException('FiberRunner: private loop exited before the fiber completed');
             }
-        });
-
-        $driver->queue(static function () use ($fiber): void {
-            $fiber->start();
-        });
-
-        $driver->run();
-
-        if (!$done) {
-            throw new \RuntimeException('FiberRunner: private loop exited before the fiber completed');
+            if ($error !== null) {
+                throw $error;
+            }
+            return $result;
+        } finally {
+            EventLoop::setDriver($previousDriver);
         }
-        if ($error !== null) {
-            throw $error;
-        }
-        return $result;
     }
 
     /**

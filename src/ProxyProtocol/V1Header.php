@@ -52,6 +52,7 @@ final class V1Header implements HeaderBuilder
         int $dstPort,
         ?string $family = null
     ) {
+        $autoDetect = $family === null;
         $detectedFamily = $family ?? self::detectFamily($srcIp);
 
         if (
@@ -60,6 +61,18 @@ final class V1Header implements HeaderBuilder
             && $detectedFamily !== self::FAMILY_UNKNOWN
         ) {
             throw new Exception(sprintf('Invalid PROXY v1 family %s', $detectedFamily));
+        }
+
+        // When the caller asked for auto-detect, a UNKNOWN result means the
+        // source IP is malformed. Don't silently degrade to the spec-mandated
+        // "PROXY UNKNOWN\r\n" form — that's a footgun (the user thinks the
+        // real peer is being advertised). The explicit no-peer path lives at
+        // V1Header::unknown() / Configurator::v1Unknown().
+        if ($autoDetect && $detectedFamily === self::FAMILY_UNKNOWN) {
+            throw new Exception(sprintf(
+                'Source IP %s is neither valid IPv4 nor IPv6 (use V1Header::unknown() if no peer info is available)',
+                $srcIp
+            ));
         }
 
         if ($detectedFamily !== self::FAMILY_UNKNOWN) {

@@ -536,9 +536,14 @@ class SMTP
         }
 
         //Hand back the live resource so subclasses that poke `$this->smtp_conn`
-        //(e.g. legacy PROXY-protocol shims) keep working byte-for-byte.
+        //(e.g. legacy PROXY-protocol shims) keep working byte-for-byte. Async
+        //transports (Workerman / coroutine) don't own a PHP stream — they
+        //return `true` so SMTP::connect()'s `=== false` failure check sees a
+        //truthy value and the rest of the protocol flow continues through the
+        //transport. Callers that need the raw resource should call
+        //`getTransport()->getResource()` directly.
         $resource = $transport->getResource();
-        return $resource === null ? false : $resource;
+        return $resource ?? true;
     }
 
     /**
@@ -790,7 +795,7 @@ class SMTP
         if ($this->transport === null) {
             return false;
         }
-        if ($this->transport->getResource() === null && !is_resource($this->smtp_conn)) {
+        if (!$this->transport->isOpen()) {
             return false;
         }
         $sock_status = $this->transport->getMetadata();
