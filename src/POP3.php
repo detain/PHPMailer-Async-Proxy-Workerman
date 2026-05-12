@@ -377,25 +377,34 @@ class POP3
      */
     public function disconnect()
     {
-        // If could not connect at all, no need to disconnect
-        if ($this->transport === null || !$this->transport->isOpen()) {
+        if ($this->transport === null) {
+            // Never even built a transport — nothing to release.
             $this->connected = false;
             $this->pop_conn = false;
             return;
         }
 
-        $this->sendString('QUIT' . static::LE);
+        // Only attempt the polite QUIT/response exchange if the connection
+        // is still usable. Otherwise we'd just be writing to a half-closed
+        // socket. But ALWAYS close the transport — the original
+        // pre-refactor code unconditionally `fclose`'d the resource, so a
+        // POP3 server that hung up after AUTH still got its socket
+        // released. Skipping `transport->close()` would leak the resource
+        // until the next connect() or object destruction.
+        if ($this->transport->isOpen()) {
+            $this->sendString('QUIT' . static::LE);
 
-        // RFC 1939 shows POP3 server sending a +OK response to the QUIT command.
-        // Try to get it.  Ignore any failures here.
-        try {
-            $this->getResponse();
-        } catch (Exception $e) {
-            //Do nothing
+            // RFC 1939 says the server sends a +OK to QUIT. Try to read it.
+            // Ignore any failures here.
+            try {
+                $this->getResponse();
+            } catch (Exception $e) {
+                //Do nothing
+            }
         }
 
-        //The QUIT command may cause the daemon to exit, which will kill our connection
-        //So ignore errors here
+        // The QUIT command may cause the daemon to exit, which will kill our
+        // connection. So ignore errors here.
         try {
             $this->transport->close();
         } catch (Exception $e) {
