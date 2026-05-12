@@ -212,23 +212,79 @@ final class WorkermanTransport implements Transport
         if (!is_resource($this->socket)) {
             return false;
         }
-        // Non-blocking TLS handshake — see step 8 for the full would-block loop.
-        // For step 7 the stub is good enough: do a blocking-style handshake
-        // (works fine when called outside an event loop because the kernel will
-        // not return EAGAIN under low concurrency). Step 8 replaces with a
-        // proper EventLoop::onReadable/onWritable suspension loop.
         return FiberRunner::run(function () use ($cryptoMethod, $timeout): bool {
+            return $this->cryptoLoop($cryptoMethod, $timeout);
+        });
+    }
+
+    /**
+     * Drive a non-blocking TLS handshake. On a non-blocking stream,
+     * stream_socket_enable_crypto() returns three states:
+     *
+     *   - true  — handshake complete, success
+     *   - false — handshake failed (cert, protocol mismatch, etc.)
+     *   - 0     — would block; the kernel needs more I/O — caller MUST
+     *             re-call after the socket becomes readable AND/OR writable
+     *
+     * We loop on (0), suspending on EventLoop::onReadable + onWritable
+     * (whichever fires first) up to the timeout, then retry the crypto
+     * call. This is the documented pattern for streams-API non-blocking
+     * TLS — see https://www.php.net/stream_socket_enable_crypto.
+     */
+    private function cryptoLoop(int $cryptoMethod, int $timeout): bool
+    {
+        $deadline = $timeout > 0 ? microtime(true) + $timeout : null;
+
+        while (true) {
             $this->installHandler();
             try {
-                $deadline = microtime(true) + max(1, $timeout);
-                stream_set_blocking($this->socket, true);
-                $ok = stream_socket_enable_crypto($this->socket, true, $cryptoMethod);
-                stream_set_blocking($this->socket, false);
-                return (bool) $ok;
+                $r = @stream_socket_enable_crypto($this->socket, true, $cryptoMethod);
             } finally {
                 $this->restoreHandler();
             }
-        });
+
+            if ($r === true) {
+                return true;
+            }
+            if ($r === false) {
+                return false;
+            }
+            // $r === 0 — would block. Wait for readable OR writable, then retry.
+            $remaining = $deadline === null ? null : ($deadline - microtime(true));
+            if ($remaining !== null && $remaining <= 0) {
+                $this->connectError = ['errno' => 0, 'errstr' => 'TLS handshake timed out'];
+                return false;
+            }
+
+            $suspension = EventLoop::getSuspension();
+            $readId = EventLoop::onReadable($this->socket, static function () use ($suspension): void {
+                $suspension->resume('readable');
+            });
+            $writeId = EventLoop::onWritable($this->socket, static function () use ($suspension): void {
+                $suspension->resume('writable');
+            });
+            $timerId = null;
+            if ($remaining !== null) {
+                $delay = $remaining > 0 ? $remaining : 0.001;
+                $timerId = EventLoop::delay($delay, static function () use ($suspension): void {
+                    $suspension->resume('timeout');
+                });
+            }
+            try {
+                $signal = $suspension->suspend();
+            } finally {
+                EventLoop::cancel($readId);
+                EventLoop::cancel($writeId);
+                if ($timerId !== null) {
+                    EventLoop::cancel($timerId);
+                }
+            }
+            if ($signal === 'timeout') {
+                $this->connectError = ['errno' => 0, 'errstr' => 'TLS handshake timed out'];
+                return false;
+            }
+            // loop: try crypto again on either readable or writable
+        }
     }
 
     public function getMetadata(): array
