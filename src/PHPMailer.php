@@ -2178,6 +2178,32 @@ class PHPMailer
     }
 
     /**
+     * Enable / disable PROXY Protocol v1 or v2 for the next SMTP send.
+     *
+     * Pass an instance of {@see \PHPMailer\PHPMailer\ProxyProtocol\HeaderBuilder}
+     * — usually built via {@see \PHPMailer\PHPMailer\ProxyProtocol\Configurator}:
+     *
+     *     use PHPMailer\PHPMailer\ProxyProtocol\Configurator;
+     *     $mail->setProxyProtocol(Configurator::v1($srcIp, $dstIp, $srcPort, $dstPort));
+     *     $mail->setProxyProtocol(Configurator::v2($srcIp, $dstIp, $srcPort, $dstPort));
+     *
+     * Pass `null` to disable. Calling this before {@see send()} ensures the
+     * header is written immediately after TCP connect and before any SMTP
+     * traffic — exactly where HAProxy / ZoneMTA / nginx-stream expect it.
+     *
+     * @return $this
+     */
+    public function setProxyProtocol(?\PHPMailer\PHPMailer\ProxyProtocol\HeaderBuilder $builder)
+    {
+        if ($builder === null) {
+            $this->getSMTPInstance()->disableProxyProtocol();
+        } else {
+            $this->getSMTPInstance()->enableProxyProtocol($builder);
+        }
+        return $this;
+    }
+
+    /**
      * Provide SMTP XCLIENT attributes
      *
      * @param string $name  Attribute name

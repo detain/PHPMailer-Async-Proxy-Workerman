@@ -37,9 +37,16 @@ final class StreamTransport implements Transport
     /** @var array{errno: int, errstr: string, errfile: string, errline: int} */
     private array $lastWarning = ['errno' => 0, 'errstr' => '', 'errfile' => '', 'errline' => 0];
 
+    private ?string $proxyProtocolHeader = null;
+
     public function setErrorHandler(?callable $handler): void
     {
         $this->errorSink = $handler === null ? null : \Closure::fromCallable($handler);
+    }
+
+    public function setProxyProtocolHeader(?string $bytes): void
+    {
+        $this->proxyProtocolHeader = $bytes;
     }
 
     public function connect(string $host, int $port, int $timeout, array $contextOptions = []): bool
@@ -89,6 +96,25 @@ final class StreamTransport implements Transport
 
         $this->readTimeout = $timeout;
         $this->connectError = ['errno' => 0, 'errstr' => ''];
+
+        if ($this->proxyProtocolHeader !== null && $this->proxyProtocolHeader !== '') {
+            $bytes = $this->proxyProtocolHeader;
+            $expected = strlen($bytes);
+            $written = $this->write($bytes);
+            if ($written === false || $written !== $expected) {
+                $this->connectError = [
+                    'errno' => 0,
+                    'errstr' => sprintf(
+                        'Failed to write PROXY protocol header (%d/%d bytes)',
+                        $written === false ? 0 : $written,
+                        $expected
+                    ),
+                ];
+                $this->close();
+                return false;
+            }
+        }
+
         return true;
     }
 

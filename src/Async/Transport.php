@@ -138,4 +138,14 @@ interface Transport
      * keeps capturing connection-failure detail the same way it always has.
      */
     public function setErrorHandler(?callable $handler): void;
+
+    /**
+     * Queue a PROXY protocol header (v1 text or v2 binary) to be written on
+     * the wire *immediately* after the TCP handshake and *before* any
+     * application data — that's where HAProxy / ZoneMTA / nginx expect it.
+     *
+     * Pass `null` to disable. Set before {@see connect()}; calling it after
+     * a connection is open has no effect on the current session.
+     */
+    public function setProxyProtocolHeader(?string $bytes): void;
 }
