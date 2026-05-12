@@ -1,3 +1,14 @@
+.sisyphus
+.cursor
+.caliber
+.codenomad
+.logs
+.opencode
+.openclaw
+.agents
+.claude
+CLAUDE.md
+
 docs/*
 !docs/README.md
 test/message.txt
@@ -14,3 +25,6 @@ test/PHPMailerTest.php*nonexistent_file.txt
 test/*/PHPMailerTest.php*nonexistent_file.txt
 phpunit.xml
 /.phpunit.result.cache
+
+# Caliber local state
+.caliber/
