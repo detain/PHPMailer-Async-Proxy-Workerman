@@ -23,6 +23,7 @@ namespace PHPMailer\PHPMailer;
 
 use PHPMailer\PHPMailer\Async\StreamTransport;
 use PHPMailer\PHPMailer\Async\Transport;
+use PHPMailer\PHPMailer\ProxyProtocol\HeaderBuilder;
 
 /**
  * PHPMailer RFC821 SMTP email transport class.
@@ -408,6 +409,24 @@ class SMTP
     }
 
     /**
+     * Currently configured PROXY protocol header builder — null when disabled.
+     */
+    protected ?HeaderBuilder $proxyProtocolBuilder = null;
+
+    /**
+     * Build a {@see \Closure} that forwards PHP warnings into this SMTP's
+     * protected {@see errorHandler()} method. Needed because protected methods
+     * are not callable from another namespace via `[$this, 'errorHandler']`
+     * (PHP strict-callable type check rejects it).
+     */
+    private function buildErrorHandlerClosure(): \Closure
+    {
+        return function ($errno, $errmsg, $errfile = '', $errline = 0): void {
+            $this->errorHandler($errno, $errmsg, $errfile, $errline);
+        };
+    }
+
+    /**
      * Inject a custom byte-level transport (e.g. a Workerman-backed async one).
      *
      * Must be called before {@see connect()} — replacing the transport on an open
@@ -416,7 +435,54 @@ class SMTP
     public function setTransport(Transport $transport): void
     {
         $this->transport = $transport;
-        $transport->setErrorHandler([$this, 'errorHandler']);
+        $transport->setErrorHandler($this->buildErrorHandlerClosure());
+        if ($this->proxyProtocolBuilder !== null) {
+            $transport->setProxyProtocolHeader($this->proxyProtocolBuilder->build());
+        }
+    }
+
+    /**
+     * Enable PROXY Protocol v1 (text) or v2 (binary) for this session.
+     *
+     * The configured header is written immediately after TCP connect and
+     * before any SMTP traffic, so an HAProxy-style receiver (ZoneMTA, nginx,
+     * AWS NLB) sees the real client IP.
+     *
+     * Pass any {@see HeaderBuilder} — most callers will use the fluent
+     * {@see \PHPMailer\PHPMailer\ProxyProtocol\Configurator} helpers:
+     *
+     *     $smtp->enableProxyProtocol(Configurator::v1($srcIp, $dstIp, $srcPort, $dstPort));
+     *     $smtp->enableProxyProtocol(Configurator::v2($srcIp, $dstIp, $srcPort, $dstPort));
+     *
+     * @return $this
+     */
+    public function enableProxyProtocol(HeaderBuilder $builder): self
+    {
+        $this->proxyProtocolBuilder = $builder;
+        $this->getTransport()->setProxyProtocolHeader($builder->build());
+        return $this;
+    }
+
+    /**
+     * Disable PROXY Protocol for this session.
+     *
+     * @return $this
+     */
+    public function disableProxyProtocol(): self
+    {
+        $this->proxyProtocolBuilder = null;
+        if ($this->transport !== null) {
+            $this->transport->setProxyProtocolHeader(null);
+        }
+        return $this;
+    }
+
+    /**
+     * Get the current PROXY Protocol builder, or null when disabled.
+     */
+    public function getProxyProtocolBuilder(): ?HeaderBuilder
+    {
+        return $this->proxyProtocolBuilder;
     }
 
     /**
@@ -428,7 +494,7 @@ class SMTP
     {
         if ($this->transport === null) {
             $this->transport = new StreamTransport();
-            $this->transport->setErrorHandler([$this, 'errorHandler']);
+            $this->transport->setErrorHandler($this->buildErrorHandlerClosure());
         }
         return $this->transport;
     }
