@@ -201,9 +201,9 @@ final class WorkermanTransport implements Transport
             return true;
         }
 
-        return FiberRunner::run(function () use ($timeoutSeconds): ?bool {
+        return FiberRunner::run(function () use ($timeoutSeconds): bool {
             $deadline = $timeoutSeconds > 0 ? microtime(true) + $timeoutSeconds : null;
-            return $this->readChunk($deadline) ? true : false;
+            return $this->readChunk($deadline);
         });
     }
 

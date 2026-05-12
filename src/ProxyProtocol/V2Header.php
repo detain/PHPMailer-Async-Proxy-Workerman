@@ -117,13 +117,12 @@ final class V2Header implements HeaderBuilder
 
     public function build(): string
     {
-        $addresses = $this->family === self::FAMILY_TCP6
-            ? inet_pton($this->srcIp) . inet_pton($this->dstIp)
-            : inet_pton($this->srcIp) . inet_pton($this->dstIp);
-
-        if ($addresses === false || $addresses === '') {
+        $src = inet_pton($this->srcIp);
+        $dst = inet_pton($this->dstIp);
+        if ($src === false || $dst === false) {
             throw new Exception('Unable to pack PROXY v2 addresses');
         }
+        $addresses = $src . $dst;
 
         $portsPacked = pack('nn', $this->srcPort, $this->dstPort);
         $payload = $addresses . $portsPacked;
