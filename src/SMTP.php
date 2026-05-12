@@ -795,22 +795,27 @@ class SMTP
         if ($this->transport === null) {
             return false;
         }
-        if (!$this->transport->isOpen()) {
-            return false;
-        }
+
+        // Distinguish three states deliberately so the upstream `EOF caught while
+        // checking if connected` warning + cleanup-via-close() side effect still
+        // fires when the connection went away under us (a transport that hands
+        // back a stream resource at EOF still meets isOpen()=false in our
+        // current impls, but checking metadata directly keeps the path robust
+        // against future transport variants that decouple `isOpen` from `eof`).
         $sock_status = $this->transport->getMetadata();
         if (!empty($sock_status['eof'])) {
-            //The socket is valid but we are not connected
-            $this->edebug(
-                'SMTP NOTICE: EOF caught while checking if connected',
-                self::DEBUG_CLIENT
-            );
-            $this->close();
-
+            // Was there ever a connection? Only emit the notice + close if so.
+            if ($this->transport->getResource() !== null || $this->smtp_conn) {
+                $this->edebug(
+                    'SMTP NOTICE: EOF caught while checking if connected',
+                    self::DEBUG_CLIENT
+                );
+                $this->close();
+            }
             return false;
         }
 
-        return true;
+        return $this->transport->isOpen();
     }
 
     /**

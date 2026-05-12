@@ -1,4 +1,26 @@
-# Security notices relating to PHPMailer
+# Security notices relating to PHPMailer (fork)
+
+## Reporting a vulnerability in this fork
+
+Issues that are **specific to the async transport / PROXY-protocol code in
+this fork** — i.e. anything under `src/Async/`, `src/ProxyProtocol/`, or
+the fork-specific changes to `src/SMTP.php`, `src/PHPMailer.php`, and
+`src/POP3.php` — should be reported privately to the fork maintainer:
+
+- **Maintainer:** Joe Huss — `detain@interserver.net`
+- **Repo:** https://github.com/detain/PHPMailer-Async-Proxy-Workerman
+- Prefer the GitHub **Security Advisories** flow on the repo
+  ([create a draft advisory](https://github.com/detain/PHPMailer-Async-Proxy-Workerman/security/advisories/new))
+  so a CVE can be coordinated. Email is fine as a fallback.
+
+Vulnerabilities in the inherited upstream PHPMailer code (anything that
+also exists upstream untouched) should be reported to the upstream
+maintainers as described below. Upstream fixes are pulled into this fork
+promptly when they land.
+
+---
+
+## Upstream PHPMailer reporting
 
 Please disclose any security issues or vulnerabilities found through [Tidelift's coordinated disclosure system](https://tidelift.com/security) or to the maintainers privately.
 
