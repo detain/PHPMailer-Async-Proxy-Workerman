@@ -44,13 +44,18 @@ abstract class SendTestCase extends PreSendTestCase
     {
         /*
          * Make sure the testbootstrap.php file is available.
-         * Pretty much everything will fail due to unset recipient if this is not done, so error
-         * the tests out before they run if the file does not exist.
+         *
+         * In CI we provision a `test/testbootstrap.php` (copied from
+         * testbootstrap-dist) and stand up an smtp-sink listener. On a fresh
+         * dev checkout neither exists — those tests then have no live SMTP to
+         * talk to. Skip rather than error, so the dev baseline is "all green"
+         * instead of "71 errors people learn to ignore". CI still exercises
+         * the full set via the workflow's smtp-sink + testbootstrap setup.
          */
         if (file_exists(\PHPMAILER_INCLUDE_DIR . '/test/testbootstrap.php') === false) {
-            throw new Exception(
-                'Test config params missing - copy testbootstrap-dist.php to testbootstrap.php and change'
-                . ' as appropriate for your own test environment setup.'
+            $this->markTestSkipped(
+                'Live-SMTP test skipped: copy testbootstrap-dist.php to testbootstrap.php '
+                . 'and point it at a running SMTP server to exercise this case.'
             );
         }
 
