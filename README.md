@@ -84,15 +84,17 @@ expect it. Auto-detects IPv4 vs IPv6 from the source IP.
 
 ## Async transport (Workerman / Webman)
 
+There are three transports; the factory picks the best one for the
+current runtime so most consumers never have to know the difference:
+
 ```php
-use PHPMailer\PHPMailer\Async\WorkermanTransport;
+use PHPMailer\PHPMailer\Async\TransportFactory;
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\SMTP;
 use PHPMailer\PHPMailer\ProxyProtocol\Configurator;
 
-// Inside a Workerman worker (or any code running under a Revolt event-loop):
 $smtp = new SMTP();
-$smtp->setTransport(new WorkermanTransport());
+$smtp->setTransport(TransportFactory::auto());
 
 $mail = new PHPMailer(true);
 $mail->setSMTPInstance($smtp);
@@ -106,9 +108,58 @@ $mail->Body = 'Hello';
 $mail->send(); // Yields to the event-loop on every read/write
 ```
 
-The library works whether you're inside a Workerman event-loop or just running
-PHPUnit / CLI — `FiberRunner` spins up a private Revolt loop on demand. That's
-why the upstream PHPMailer test suite passes against this fork unchanged.
+`TransportFactory::auto()` chooses:
+
+| Runtime | Transport | Notes |
+|---------|-----------|-------|
+| Real Workerman worker hosting the call | `WorkermanConnectionTransport` | Uses Workerman's own `AsyncTcpConnection`; plugs into the worker's event loop, stats, lifecycle. |
+| Revolt available, no worker | `WorkermanTransport` | Raw non-blocking streams + Revolt watchers. Works in any Revolt context including PHPUnit / CLI. |
+| Neither | `StreamTransport` | Blocking, byte-for-byte equivalent to upstream PHPMailer. |
+
+`TransportFactory` also exposes forced helpers: `blocking()`, `revoltDirect()`, `workermanConnection()`.
+
+`WorkermanConnectionTransport` requires a long-lived event-loop / fiber context: in a real worker the loop is always alive; in PHPUnit / CLI wrap the **whole SMTP session** in one `FiberRunner::run(...)`. The other transports work without that constraint.
+
+The library works whether you're inside a Workerman event-loop or just running PHPUnit / CLI — `FiberRunner` spins up a private Revolt loop on demand. That's why the upstream PHPMailer test suite passes against this fork unchanged.
+
+## Connection pooling
+
+For high-volume senders that don't need PROXY-protocol-per-request, the
+fork ships a process-local SMTP pool that caches connected + authenticated
+sessions across calls:
+
+```php
+use PHPMailer\PHPMailer\Async\SmtpConnectionPool;
+use PHPMailer\PHPMailer\Async\TransportFactory;
+use PHPMailer\PHPMailer\SMTP;
+
+$pool = new SmtpConnectionPool(maxPerKey: 8, idleTimeoutSec: 60);
+
+$key = "smtp.example.com:25:alice";
+$smtp = $pool->acquireOrNew($key, function () {
+    $s = new SMTP();
+    $s->setTransport(TransportFactory::auto());
+    return $s;
+});
+
+if (!$smtp->connected()) {
+    // Pool miss — full handshake
+    $smtp->connect('smtp.example.com', 25, 5);
+    $smtp->hello('me.example.com');
+    $smtp->authenticate('alice', $pass);
+}
+// ... mail() / recipient() / data() ...
+$pool->release($key, $smtp);   // RSET + keep for the next call
+```
+
+**PROXY + pool don't mix.** A pooled connection shipped its PROXY header once
+at connect time, advertising a specific peer. Reusing it for a *different*
+client would silently misreport the source IP. The pool has no PROXY
+awareness — callers that flip PROXY per request should either include the
+peer identity in their pool key, or — much simpler — skip the pool while
+PROXY is on. The mailbaby-mail-api integration takes that route via the
+`mail.connection_pool_enabled` config flag, which is hard-disabled whenever
+PROXY is on.
 
 ## Compatibility
 

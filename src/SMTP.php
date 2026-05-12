@@ -40,7 +40,7 @@ class SMTP
      * @var string
      * @deprecated This constant will be removed in PHPMailer 8.0. Use `PHPMailer::VERSION` instead.
      */
-    const VERSION = '8.0.0-async.0';
+    const VERSION = '8.0.0-async.2';
 
     /**
      * SMTP line break constant.
