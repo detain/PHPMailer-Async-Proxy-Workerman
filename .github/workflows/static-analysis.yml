@@ -1,0 +1,37 @@
+name: "Static analysis"
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  phpstan:
+    runs-on: ubuntu-22.04
+    name: PHPStan
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # 2.37.0
+        with:
+          php-version: '8.3'
+          coverage: none
+          extensions: ctype, filter, hash, sockets, pcntl, openssl, mbstring
+          tools: phpstan:^1.11
+
+      - name: Install Composer dependencies
+        uses: "ramsey/composer-install@65e4f84970763564f46a70b8a54b90d033b3bdda" # 4.0.0
+        with:
+          custom-cache-suffix: $(date -u "+%Y-%m")
+
+      - name: Run PHPStan
+        run: phpstan analyse --configuration phpstan.neon.dist --no-progress --error-format=github

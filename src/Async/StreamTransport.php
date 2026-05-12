@@ -27,6 +27,7 @@ final class StreamTransport implements Transport
     /** @var resource|null */
     private $socket = null;
 
+    /** @phpstan-ignore-next-line property.onlyWritten — kept for symmetry with WorkermanTransport */
     private int $readTimeout = 30;
 
     private ?\Closure $errorSink = null;

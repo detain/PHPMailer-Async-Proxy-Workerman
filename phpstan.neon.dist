@@ -1,0 +1,20 @@
+parameters:
+    level: 5
+    paths:
+        - src/Async
+        - src/ProxyProtocol
+    bootstrapFiles:
+        - vendor/autoload.php
+    excludePaths:
+        - vendor
+        - test/Fixtures
+    treatPhpDocTypesAsCertain: false
+    reportUnmatchedIgnoredErrors: false
+    ignoreErrors:
+        # PHP's stream functions are not type-precise enough for PHPStan's strict view.
+        - '#Parameter \#[0-9]+ .* of function fwrite expects resource, .* given#'
+        - '#Parameter \#[0-9]+ .* of function fread expects resource, .* given#'
+        - '#Parameter \#[0-9]+ .* of function feof expects resource, .* given#'
+        - '#Parameter \#[0-9]+ .* of function fgets expects resource, .* given#'
+        - '#Parameter \#[0-9]+ .* of function fclose expects resource, .* given#'
+        - '#Parameter \#[0-9]+ .* of function stream_.* expects resource, .* given#'
