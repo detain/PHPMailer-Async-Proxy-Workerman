@@ -1,5 +1,41 @@
 # PHPMailer Change Log
 
+## Version 8.0.0-async.2 (May 2026)
+
+* **`SmtpConnectionPool`** — process-local LRU pool of connected +
+  authenticated SMTP sessions. Keyed by an opaque string the caller picks
+  (typically `host:port:username`). NOOP health-check on acquire, RSET on
+  release, LRU-eviction on overflow. Documented contract: pooled
+  connections are pinned to whatever PROXY header they shipped at connect
+  time, so callers using PROXY-per-request should bypass the pool while
+  PROXY is on.
+
+* **`WorkermanConnectionTransport`** — async transport built on Workerman's
+  own `Workerman\Connection\AsyncTcpConnection`. Plugs into the worker's
+  event loop, statistics, lifecycle; uses `pauseRecv()` / `resumeRecv()`
+  to fence STARTTLS handshakes off the read loop; uses `onBufferDrain`
+  for backpressure-aware writes. Outside a real worker it installs a
+  `Workerman\Events\Fiber` adapter on `Worker::$globalEvent` that
+  delegates to the active Revolt driver, so PHPUnit / CLI use works
+  with one `FiberRunner::run(...)` wrap.
+
+  Per its contract this transport requires a single long-lived
+  event-loop / fiber context across the whole SMTP session — entering
+  and exiting `FiberRunner::run` between method calls would kill its
+  long-lived event watchers. Each public I/O method throws a helpful
+  `RuntimeException` rather than silently hanging when called outside
+  a fiber.
+
+* **`TransportFactory`** — one-stop helper for picking the right transport:
+  - `auto()` picks `WorkermanConnectionTransport` when a real worker is
+    hosting, else `WorkermanTransport`, else `StreamTransport`
+  - `blocking()` / `revoltDirect()` / `workermanConnection()` are
+    forced selectors for callers that want explicit control
+
+* 18 new tests across `SmtpConnectionPool` (10), `WorkermanConnectionTransport`
+  (5), and `TransportFactory` (3). Full async + proxy-protocol suites:
+  48 tests, 149 assertions, all green.
+
 ## Version 8.0.0-async.1 (May 2026)
 
 Follow-up improvements after a post-merge review of `8.0.0-async.0`:
