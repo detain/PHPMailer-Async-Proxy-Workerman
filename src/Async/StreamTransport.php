@@ -70,7 +70,7 @@ final class StreamTransport implements Transport
         if (preg_match('#^(ssl|tls)://(.+)$#i', $host, $matches) === 1) {
             if ($this->proxyProtocolHeader !== null && $this->proxyProtocolHeader !== '') {
                 $bareHost = $matches[2];
-                $deferredCryptoMethod = self::resolveImplicitCryptoMethod();
+                $deferredCryptoMethod = self::resolveImplicitCryptoMethod($contextOptions);
             }
         }
 
@@ -150,11 +150,30 @@ final class StreamTransport implements Transport
     }
 
     /**
-     * Resolve the STREAM_CRYPTO_METHOD_* bitmask to use when upgrading to
-     * implicit TLS after a deferred ssl:// connect.
+     * Resolve the `STREAM_CRYPTO_METHOD_*` bitmask to use when upgrading to
+     * implicit TLS after a deferred `ssl://` connect.
+     *
+     * If the caller supplied a stream context with an explicit
+     * `ssl.crypto_method` (or `tls.crypto_method`), honor it — PHPMailer
+     * exposes `SMTPOptions` for exactly this reason and callers who want
+     * to lock the protocol set deserve to have it respected. Falls back
+     * to TLS_CLIENT + TLSv1.1/1.2 when nothing was supplied.
+     *
+     * @param array<string,mixed> $contextOptions Same shape as
+     *        stream_context_create() — the `ssl` (or `tls`) key holds
+     *        the options array.
      */
-    private static function resolveImplicitCryptoMethod(): int
+    private static function resolveImplicitCryptoMethod(array $contextOptions = []): int
     {
+        foreach (['ssl', 'tls'] as $bucket) {
+            if (
+                isset($contextOptions[$bucket]['crypto_method'])
+                && is_int($contextOptions[$bucket]['crypto_method'])
+            ) {
+                return (int) $contextOptions[$bucket]['crypto_method'];
+            }
+        }
+
         $method = STREAM_CRYPTO_METHOD_TLS_CLIENT;
         if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) {
             $method |= STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;

@@ -126,7 +126,7 @@ final class WorkermanConnectionTransport implements Transport
             $bareHost = $matches[2];
             if ($this->proxyProtocolHeader !== null && $this->proxyProtocolHeader !== '') {
                 $connectionUri = 'tcp://' . $bareHost . ':' . $port;
-                $deferredCryptoMethod = $this->resolveImplicitCryptoMethod();
+                $deferredCryptoMethod = $this->resolveImplicitCryptoMethod($contextOptions);
             } else {
                 $connectionUri = $scheme . '://' . $bareHost . ':' . $port;
             }
@@ -606,8 +606,27 @@ final class WorkermanConnectionTransport implements Transport
         }
     }
 
-    private function resolveImplicitCryptoMethod(): int
+    /**
+     * Resolve the crypto-method bitmask for the deferred-TLS path. Honors
+     * an explicit `ssl.crypto_method` / `tls.crypto_method` from the
+     * caller's stream-context options (PHPMailer's `SMTPOptions`), so a
+     * caller that locked the protocol set on stock PHPMailer keeps that
+     * lock after the PROXY-before-TLS scheme swap. Falls back to
+     * TLS_CLIENT + 1.1/1.2 when nothing was supplied.
+     *
+     * @param array<string,mixed> $contextOptions
+     */
+    private function resolveImplicitCryptoMethod(array $contextOptions = []): int
     {
+        foreach (['ssl', 'tls'] as $bucket) {
+            if (
+                isset($contextOptions[$bucket]['crypto_method'])
+                && is_int($contextOptions[$bucket]['crypto_method'])
+            ) {
+                return (int) $contextOptions[$bucket]['crypto_method'];
+            }
+        }
+
         $method = STREAM_CRYPTO_METHOD_TLS_CLIENT;
         if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) {
             $method |= STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
