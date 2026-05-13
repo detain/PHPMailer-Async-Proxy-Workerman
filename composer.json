@@ -61,8 +61,11 @@
         "ext-ctype": "*",
         "ext-filter": "*",
         "ext-hash": "*",
-        "workerman/workerman": "^5.0",
+        "workerman/workerman": "^5.1",
         "revolt/event-loop": "^1.0"
+    },
+    "replace": {
+        "phpmailer/phpmailer": "*"
     },
     "require-dev": {
         "dealerdirect/phpcodesniffer-composer-installer": "^1.0",

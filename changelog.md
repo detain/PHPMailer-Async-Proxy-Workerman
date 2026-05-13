@@ -1,5 +1,60 @@
 # PHPMailer Change Log
 
+## Version 8.0.0+async.3 (May 2026)
+
+Round-3 codex review fixes — three packaging / interop bugs that
+would have hurt anyone trying to consume the fork in non-trivial
+deployments.
+
+### Breaking-ish (composer metadata)
+
+* **Version string is now Composer-normalizable.** `8.0.0-async.0`
+  (and successors `-async.1` / `-async.2`) is rejected by Composer
+  2.x as `Invalid version string` — `async` is not a recognised
+  stability keyword, so any project trying to install the fork by
+  version constraint fails outright. Moved to SemVer 2.0.0 build
+  metadata: `8.0.0+async.3`. Same precedence as `8.0.0`, but the
+  `+async.N` suffix marks the fork iteration. Bumps `VERSION`, the
+  three `const VERSION` declarations, and changelog entry header.
+* **`replace`** metadata now claims `phpmailer/phpmailer`. Projects
+  with transitive deps requiring upstream phpmailer/phpmailer now
+  resolve against this fork. Before this, a `composer require` of
+  the fork plus any package depending on `phpmailer/phpmailer`
+  would either install both (and namespace-clash) or fail.
+
+### Compat bumps
+
+* **`workerman/workerman` constraint tightened from `^5.0` to `^5.1`.**
+  `Workerman\Events\Fiber` — the class our consumers' `config/server.php`
+  hard-codes for the worker event loop — only ships in 5.1+. The old
+  `^5.0` allowed a resolver to land on 5.0.x, where startup would
+  crash with "class not found" once the worker tried to instantiate
+  the event loop.
+
+### Correctness
+
+* **`WorkermanTransport::resolveImplicitCryptoMethod()`** (the
+  Revolt-direct transport — picked by `TransportFactory::auto()`
+  outside a real Workerman worker, including CLI / PHPUnit) now
+  honors `$contextOptions['ssl']['crypto_method']` like the other
+  two transports. Previously, PR #18 had only fixed `StreamTransport`
+  and `WorkermanConnectionTransport`; this one still ignored the
+  caller's protocol restriction on the PROXY-before-SMTPS deferred-
+  TLS path.
+
+### Tests
+
+* `test/Async/CryptoMethodPassthroughTest` — 3 new tests covering
+  `WorkermanTransport` (explicit honored, fallback, non-int
+  ignored). Now 8 total, mirroring the three-transport surface.
+* `test/ComposerMetadataTest` — new file pinning the three
+  composer.json invariants (replace metadata exists, workerman
+  constraint is `>=5.1`, VERSION string is Composer-normalizable
+  and matches the three `const VERSION` declarations).
+
+Full suite: 760 tests, 0 errors, 74 skipped (71 SendTestCase env +
+3 long-standing). phpcs + phpstan clean.
+
 ## Version 8.0.0-async.2 (May 2026)
 
 * **`SmtpConnectionPool`** — process-local LRU pool of connected +

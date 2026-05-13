@@ -768,7 +768,7 @@ class PHPMailer
      *
      * @var string
      */
-    const VERSION = '8.0.0-async.2';
+    const VERSION = '8.0.0+async.3';
 
     /**
      * Error severity: message only, continue processing.

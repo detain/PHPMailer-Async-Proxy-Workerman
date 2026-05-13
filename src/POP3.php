@@ -50,7 +50,7 @@ class POP3
      * @var string
      * @deprecated This constant will be removed in PHPMailer 8.0. Use `PHPMailer::VERSION` instead.
      */
-    const VERSION = '8.0.0-async.2';
+    const VERSION = '8.0.0+async.3';
 
     /**
      * Default POP3 port number.
