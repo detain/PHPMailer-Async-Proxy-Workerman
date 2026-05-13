@@ -57,6 +57,29 @@ final class ComposerMetadataTest extends TestCase
         );
     }
 
+    public function testReplaceConstraintIsBoundedToTheTrackedMajor(): void
+    {
+        $constraint = self::$composer['replace']['phpmailer/phpmailer'];
+
+        // A `*` replace claims this fork satisfies every PHPMailer major
+        // (6.x, future 8.x, ...). A consumer with a transitive
+        // `phpmailer/phpmailer:^6` dep would then resolve to our 7.0.2-
+        // based fork and likely break at runtime. The fork tracks 7.0.2;
+        // the replace must be bounded to the 7.x line.
+        self::assertNotSame(
+            '*',
+            $constraint,
+            'replace.phpmailer/phpmailer must be bounded (e.g. ^7.0), not "*" '
+                . '— see codex review on PR #19'
+        );
+        self::assertMatchesRegularExpression(
+            '/^\^?7\./',
+            $constraint,
+            "replace.phpmailer/phpmailer = '{$constraint}' — must match the "
+                . 'upstream major this fork tracks (currently 7.x).'
+        );
+    }
+
     public function testWorkermanConstraintShipsEventsFiberClass(): void
     {
         $constraint = self::$composer['require']['workerman/workerman'] ?? null;
