@@ -1,5 +1,22 @@
 # PHPMailer Change Log
 
+## Version 8.0.0+async.4 (May 2026)
+
+Single follow-up correctness fix from the codex review on PR #19.
+
+* **`replace.phpmailer/phpmailer` bounded to `^7.0`** (was `*`). Composer
+  schema recommends scoping `replace` to the actual versions the fork is
+  API-compatible with. The unbounded `*` claimed this fork satisfies
+  every upstream PHPMailer version including 6.x and any future majors —
+  a consumer with a transitive `phpmailer/phpmailer:^6` dep would then
+  resolve to our 7.0.2-based fork and likely break at runtime. Verified
+  via real Composer dry-runs: the `^6.0` scenario now correctly fails
+  with "requirements could not be resolved"; the `^7.0` scenario still
+  resolves cleanly against the fork.
+* New `testReplaceConstraintIsBoundedToTheTrackedMajor` test in
+  `ComposerMetadataTest` pins this — explicit `assertNotSame('*', ...)`
+  and a regex check that the constraint matches the upstream major.
+
 ## Version 8.0.0+async.3 (May 2026)
 
 Round-3 codex review fixes — three packaging / interop bugs that

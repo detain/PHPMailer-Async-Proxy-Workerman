@@ -65,7 +65,7 @@
         "revolt/event-loop": "^1.0"
     },
     "replace": {
-        "phpmailer/phpmailer": "*"
+        "phpmailer/phpmailer": "^7.0"
     },
     "require-dev": {
         "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
