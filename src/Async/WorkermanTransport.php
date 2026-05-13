@@ -68,11 +68,14 @@ final class WorkermanTransport implements Transport
         return FiberRunner::run(function () use ($host, $port, $timeout, $contextOptions): bool {
             // Strip implicit-TLS scheme so we can write PROXY before the TLS
             // handshake. The crypto upgrade happens below after the header is
-            // on the wire — same pattern as StreamTransport::connect().
+            // on the wire — same pattern as StreamTransport::connect(). Caller's
+            // `ssl.crypto_method` (or `tls.crypto_method`) in $contextOptions is
+            // honored so anyone restricting protocol versions via PHPMailer's
+            // SMTPOptions keeps that restriction after the deferred-TLS swap.
             $deferredCryptoMethod = null;
             if (preg_match('#^(ssl|tls)://(.+)$#i', $host, $matches) === 1) {
                 $host = $matches[2];
-                $deferredCryptoMethod = $this->resolveImplicitCryptoMethod();
+                $deferredCryptoMethod = $this->resolveImplicitCryptoMethod($contextOptions);
             }
 
             $errno = 0;
@@ -141,8 +144,27 @@ final class WorkermanTransport implements Transport
         });
     }
 
-    private function resolveImplicitCryptoMethod(): int
+    /**
+     * Resolve the crypto-method bitmask for the deferred-TLS path. Honors
+     * an explicit `ssl.crypto_method` / `tls.crypto_method` from the
+     * caller's stream-context options (PHPMailer's `SMTPOptions`) before
+     * falling back to TLS_CLIENT + 1.1/1.2.
+     *
+     * Mirrors the resolver on the other two transports — see codex review
+     * on PR #13 and the followup on PR #18.
+     *
+     * @param array<string,mixed> $contextOptions
+     */
+    private function resolveImplicitCryptoMethod(array $contextOptions = []): int
     {
+        foreach (['ssl', 'tls'] as $bucket) {
+            if (isset($contextOptions[$bucket]['crypto_method'])
+                && is_int($contextOptions[$bucket]['crypto_method'])
+            ) {
+                return (int) $contextOptions[$bucket]['crypto_method'];
+            }
+        }
+
         $method = STREAM_CRYPTO_METHOD_TLS_CLIENT;
         if (defined('STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT')) {
             $method |= STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;

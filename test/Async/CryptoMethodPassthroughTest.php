@@ -15,6 +15,7 @@ namespace PHPMailer\Test\Async;
 
 use PHPMailer\PHPMailer\Async\StreamTransport;
 use PHPMailer\PHPMailer\Async\WorkermanConnectionTransport;
+use PHPMailer\PHPMailer\Async\WorkermanTransport;
 use ReflectionMethod;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 
@@ -102,5 +103,48 @@ final class CryptoMethodPassthroughTest extends TestCase
             STREAM_CRYPTO_METHOD_TLS_CLIENT,
             $default & STREAM_CRYPTO_METHOD_TLS_CLIENT
         );
+    }
+
+    /**
+     * The Revolt-direct transport is what `TransportFactory::auto()` picks
+     * outside a real Workerman worker — i.e. in CLI scripts and PHPUnit.
+     * The earlier fix only covered StreamTransport + WorkermanConnectionTransport;
+     * Codex correctly flagged this transport as missing the same passthrough.
+     */
+    public function testRevoltDirectTransportHonorsExplicitCryptoMethod(): void
+    {
+        $reflect = new ReflectionMethod(WorkermanTransport::class, 'resolveImplicitCryptoMethod');
+        $reflect->setAccessible(true);
+
+        $custom = STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
+        $transport = new WorkermanTransport();
+        $result = $reflect->invoke($transport, ['ssl' => ['crypto_method' => $custom]]);
+        self::assertSame($custom, $result);
+
+        $result2 = $reflect->invoke($transport, ['tls' => ['crypto_method' => $custom]]);
+        self::assertSame($custom, $result2, 'tls bucket honored too');
+    }
+
+    public function testRevoltDirectTransportFallsBackWithoutSupply(): void
+    {
+        $reflect = new ReflectionMethod(WorkermanTransport::class, 'resolveImplicitCryptoMethod');
+        $reflect->setAccessible(true);
+
+        $transport = new WorkermanTransport();
+        $default = $reflect->invoke($transport, []);
+        self::assertSame(
+            STREAM_CRYPTO_METHOD_TLS_CLIENT,
+            $default & STREAM_CRYPTO_METHOD_TLS_CLIENT
+        );
+    }
+
+    public function testRevoltDirectTransportIgnoresNonIntegerCryptoMethod(): void
+    {
+        $reflect = new ReflectionMethod(WorkermanTransport::class, 'resolveImplicitCryptoMethod');
+        $reflect->setAccessible(true);
+
+        $transport = new WorkermanTransport();
+        $result = $reflect->invoke($transport, ['ssl' => ['crypto_method' => 'TLS_1_3_PLEASE']]);
+        self::assertNotSame(0, $result, 'fell back to default');
     }
 }
