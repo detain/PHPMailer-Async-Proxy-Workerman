@@ -124,14 +124,11 @@ jobs:
           custom-cache-suffix: $(date -u "+%Y-%m")
 
       - name: Install postfix (for legacy SendTestCase tests)
-        uses: nick-invision/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
-        with:
-          timeout_minutes: 2
-          max_attempts: 3
-          retry_wait_seconds: 8
-          command: |
-            sudo apt-get install --fix-broken -y libsqlite3-0 postfix
-            sudo systemctl stop postfix.service
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libsqlite3-0 postfix mailutils
+          sudo systemctl stop postfix.service || true
+          sudo systemctl stop sendmail.service || true
 
       - name: Set up sendmail + smtp-sink
         run: |
