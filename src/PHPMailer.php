@@ -1284,26 +1284,27 @@ class PHPMailer
     /**
      * Parse and validate a string containing one or more RFC822-style comma-separated email addresses
      * of the form "display name <address>" into an array of name/address pairs.
-     * Uses the imap_rfc822_parse_adrlist function if the IMAP extension is available.
+     * Uses the imap_rfc822_parse_adrlist function if the IMAP extension is available and
+     * the deprecated $useimap argument is truthy.
      * Note that quotes in the name part are removed.
      *
      * @see https://www.andrew.cmu.edu/user/agreen1/testing/mrbs/web/Mail/RFC822.php A more careful implementation
      *
      * @param string $addrstr The address list string
-     * @param null   $useimap Unused. Argument has been deprecated in PHPMailer 6.11.0.
-     *                        Previously this argument determined whether to use
-     *                        the IMAP extension to parse the list and accepted a boolean value.
+     * @param bool|null $useimap Deprecated in PHPMailer 6.11.0.
+     *                           Truthy values request the deprecated IMAP parser
+     *                           and trigger a deprecation warning.
      * @param string $charset The charset to use when decoding the address list string.
      *
      * @return array
      */
     public static function parseAddresses($addrstr, $useimap = null, $charset = self::CHARSET_ISO88591)
     {
-        if ($useimap !== null) {
+        if ($useimap == true) {
             trigger_error(self::lang('deprecated_argument') . '$useimap', E_USER_DEPRECATED);
         }
         $addresses = [];
-        if (function_exists('imap_rfc822_parse_adrlist')) {
+        if ($useimap == true && function_exists('imap_rfc822_parse_adrlist')) {
             //Use this built-in parser if it's available
             // phpcs:ignore PHPCompatibility.FunctionUse.RemovedFunctions.imap_rfc822_parse_adrlistRemoved -- wrapped in function_exists()
             $list = imap_rfc822_parse_adrlist($addrstr, '');
