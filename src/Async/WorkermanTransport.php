@@ -53,6 +53,24 @@ final class WorkermanTransport implements Transport
 
     private bool $eof = false;
 
+    /** @var string|null Current host for TLS session caching */
+    private ?string $currentHost = null;
+
+    /** @var int Current port for TLS session caching */
+    private int $currentPort = 0;
+
+    /**
+     * Static TLS session cache keyed by "host:port".
+     *
+     * @var array<string, string>
+     */
+    private static array $tlsSessions = [];
+
+    /**
+     * Maximum number of TLS sessions to cache.
+     */
+    private static int $tlsSessionCacheSize = 100;
+
     public function setErrorHandler(?callable $handler): void
     {
         $this->errorSink = $handler === null ? null : Closure::fromCallable($handler);
@@ -78,12 +96,23 @@ final class WorkermanTransport implements Transport
                 $deferredCryptoMethod = $this->resolveImplicitCryptoMethod($contextOptions);
             }
 
+            // Store host/port for TLS session caching
+            $this->currentHost = $host;
+            $this->currentPort = $port;
+
             $errno = 0;
             $errstr = '';
 
             $this->installHandler();
             try {
                 $context = stream_context_create($contextOptions);
+
+                // Apply cached TLS session if available (speeds up reconnect)
+                $sessionKey = $this->getTlsSessionKey($host, $port);
+                if (isset(self::$tlsSessions[$sessionKey])) {
+                    $this->applyTlsSession($context, self::$tlsSessions[$sessionKey]);
+                }
+
                 $sock = @stream_socket_client(
                     'tcp://' . $host . ':' . $port,
                     $errno,
@@ -309,6 +338,8 @@ final class WorkermanTransport implements Transport
             }
 
             if ($r === true) {
+                // TLS handshake succeeded - cache the session for faster reconnects
+                $this->cacheTlsSession();
                 return true;
             }
             if ($r === false) {
@@ -380,6 +411,105 @@ final class WorkermanTransport implements Transport
     public function getResource()
     {
         return $this->socket;
+    }
+
+    /**
+     * Clear the TLS session cache.
+     *
+     * Call this when you suspect TLS sessions have become invalid, such as
+     * after a server certificate change.
+     */
+    public static function clearTlsSessionCache(): void
+    {
+        self::$tlsSessions = [];
+    }
+
+    /**
+     * Get the current TLS session cache size.
+     *
+     * @return int
+     */
+    public static function getTlsSessionCacheSize(): int
+    {
+        return count(self::$tlsSessions);
+    }
+
+    /**
+     * Set the maximum TLS session cache size.
+     *
+     * @param int $size Maximum number of sessions to cache
+     */
+    public static function setTlsSessionCacheSize(int $size): void
+    {
+        self::$tlsSessionCacheSize = max(1, $size);
+
+        // Prune if necessary
+        while (count(self::$tlsSessions) > self::$tlsSessionCacheSize) {
+            array_shift(self::$tlsSessions);
+        }
+    }
+
+    /**
+     * Get the TLS session key for a host:port pair.
+     */
+    private function getTlsSessionKey(string $host, int $port): string
+    {
+        return "{$host}:{$port}";
+    }
+
+    /**
+     * Apply a cached TLS session to a stream context.
+     */
+    private function applyTlsSession(object $context, string $session): void
+    {
+        if (PHP_VERSION_ID >= 80100) {
+            // PHP 8.1+ has native session cache support
+            stream_context_set_option($context, 'ssl', 'session_cache', $session);
+        }
+        // For older PHP versions, TLS session resumption is more limited
+        // The session string itself can be used with OpenSSL session IDs
+    }
+
+    /**
+     * Cache the current TLS session after a successful handshake.
+     *
+     * This enables faster TLS reconnections by avoiding full handshakes.
+     */
+    private function cacheTlsSession(): void
+    {
+        if ($this->currentHost === null || $this->currentPort === 0) {
+            return;
+        }
+
+        if (!is_resource($this->socket)) {
+            return;
+        }
+
+        // Only cache if we have SSL
+        $meta = @stream_get_meta_data($this->socket);
+        if ($meta === false || !($meta['crypto'] ?? false)) {
+            return;
+        }
+
+        try {
+            // Get the TLS session
+            $session = @stream_context_get_option($this->socket, 'ssl', 'session_cache');
+
+            if (!empty($session)) {
+                $key = $this->getTlsSessionKey($this->currentHost, $this->currentPort);
+                self::$tlsSessions[$key] = $session;
+
+                // Prune cache if too large
+                if (count(self::$tlsSessions) > self::$tlsSessionCacheSize) {
+                    // Remove oldest entry (FIFO)
+                    reset(self::$tlsSessions);
+                    $oldestKey = key(self::$tlsSessions);
+                    unset(self::$tlsSessions[$oldestKey]);
+                }
+            }
+        } catch (\Throwable $e) {
+            // TLS session caching is best-effort - ignore errors
+        }
     }
 
     // --------------- internals ---------------

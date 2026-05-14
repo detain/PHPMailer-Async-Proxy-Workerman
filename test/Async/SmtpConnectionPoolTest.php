@@ -205,6 +205,232 @@ final class SmtpConnectionPoolTest extends TestCase
         self::assertSame(0, $entry->noopCount, 'noop must not be called when disabled');
         self::assertSame(0, $factoryCalls);
     }
+
+    // ==================== Circuit Breaker Tests ====================
+
+    public function testCircuitBreakerStartsClosed(): void
+    {
+        $pool = new SmtpConnectionPool();
+        self::assertFalse($pool->isCircuitOpen('host:25:user'));
+    }
+
+    public function testCircuitBreakerOpensAfterThresholdFailures(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $pool->setCircuitBreaker(failureThreshold: 3, resetTimeout: 60.0);
+
+        // Record 3 failures to open circuit
+        $pool->recordFailure('host:25:user');
+        self::assertFalse($pool->isCircuitOpen('host:25:user'));
+
+        $pool->recordFailure('host:25:user');
+        self::assertFalse($pool->isCircuitOpen('host:25:user'));
+
+        $pool->recordFailure('host:25:user');
+        self::assertTrue($pool->isCircuitOpen('host:25:user'));
+    }
+
+    public function testCircuitBreakerResetsAfterTimeout(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $pool->setCircuitBreaker(failureThreshold: 2, resetTimeout: 0.1);
+
+        $pool->recordFailure('host:25:user');
+        $pool->recordFailure('host:25:user');
+
+        self::assertTrue($pool->isCircuitOpen('host:25:user'));
+
+        // Wait for reset timeout
+        usleep(150_000);
+
+        self::assertFalse($pool->isCircuitOpen('host:25:user'));
+    }
+
+    public function testCircuitBreakerSuccessResetsFailureCount(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $pool->setCircuitBreaker(failureThreshold: 3, resetTimeout: 60.0);
+
+        $pool->recordFailure('host:25:user');
+        $pool->recordFailure('host:25:user');
+
+        // Success before reaching threshold
+        $pool->recordSuccess('host:25:user');
+
+        // Now we need 3 more failures to open
+        $pool->recordFailure('host:25:user');
+        $pool->recordFailure('host:25:user');
+        self::assertFalse($pool->isCircuitOpen('host:25:user'));
+
+        $pool->recordFailure('host:25:user');
+        self::assertTrue($pool->isCircuitOpen('host:25:user'));
+    }
+
+    public function testAcquireOrNewThrowsWhenCircuitOpen(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $pool->setCircuitBreaker(failureThreshold: 1, resetTimeout: 60.0);
+        $pool->recordFailure('host:25:user'); // Open circuit
+
+        $this->expectException(\PHPMailer\PHPMailer\CircuitOpenException::class);
+        $pool->acquireOrNew('host:25:user', static fn() => new FakePoolSmtp());
+    }
+
+    public function testGetCircuitBreakerState(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $pool->setCircuitBreaker(failureThreshold: 3, resetTimeout: 60.0);
+
+        $pool->recordFailure('host:25:user');
+        $pool->recordFailure('host:25:user');
+
+        $state = $pool->getCircuitBreakerState();
+
+        self::assertArrayHasKey('host:25:user', $state);
+        self::assertFalse($state['host:25:user']['open']);
+        self::assertSame(2, $state['host:25:user']['failures']);
+    }
+
+    // ==================== Retry with Backoff Tests ====================
+
+    public function testAcquireOrNewWithRetrySucceedsOnFirstTry(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $factoryCalls = 0;
+
+        $smtp = $pool->acquireOrNewWithRetry('host:25:user', static function () use (&$factoryCalls) {
+            $factoryCalls++;
+            return new FakePoolSmtp(connected: true);
+        });
+
+        self::assertSame(1, $factoryCalls);
+        self::assertInstanceOf(FakePoolSmtp::class, $smtp);
+    }
+
+    public function testAcquireOrNewWithRetryThrowsAfterAllRetriesFail(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $pool->setCircuitBreaker(failureThreshold: 100, resetTimeout: 60.0); // High threshold
+
+        $this->expectException(\PHPMailer\PHPMailer\AllRetriesFailedException::class);
+        $pool->acquireOrNewWithRetry(
+            'host:25:user',
+            static fn() => throw new \RuntimeException('Connection failed'),
+            maxRetries: 2
+        );
+    }
+
+    // ==================== Observability Hook Tests ====================
+
+    public function testOnAcquireHookIsCalled(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $hookCalled = false;
+        $acquiredSmtp = null;
+
+        $pool->setObservers(
+            onAcquire: function ($smtp, $key) use (&$hookCalled, &$acquiredSmtp) {
+                $hookCalled = true;
+                $acquiredSmtp = $smtp;
+            }
+        );
+
+        $smtp = new FakePoolSmtp(connected: true);
+        $pool->release('host:25:user', $smtp);
+        $acquired = $pool->acquireOrNew('host:25:user', static fn() => new FakePoolSmtp(connected: true));
+
+        self::assertTrue($hookCalled);
+        self::assertSame($smtp, $acquiredSmtp);
+    }
+
+    public function testOnReleaseHookIsCalled(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $hookCalled = false;
+
+        $pool->setObservers(
+            onRelease: function ($smtp, $key) use (&$hookCalled) {
+                $hookCalled = true;
+            }
+        );
+
+        $smtp = new FakePoolSmtp(connected: true);
+        $pool->release('host:25:user', $smtp);
+
+        self::assertTrue($hookCalled);
+    }
+
+    public function testOnEvictHookIsCalled(): void
+    {
+        $pool = new SmtpConnectionPool(maxPerKey: 1);
+        $hookCalled = false;
+        $evictedSmtp = null;
+
+        $pool->setObservers(
+            onEvict: function ($smtp, $key) use (&$hookCalled, &$evictedSmtp) {
+                $hookCalled = true;
+                $evictedSmtp = $smtp;
+            }
+        );
+
+        $a = new FakePoolSmtp(connected: true);
+        $b = new FakePoolSmtp(connected: true);
+
+        $pool->release('k', $a); // Pool has 1 entry
+        $pool->release('k', $b); // Should evict $a
+
+        self::assertTrue($hookCalled);
+        self::assertSame($a, $evictedSmtp);
+    }
+
+    public function testOnConnectFailureHookIsCalled(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $pool->setCircuitBreaker(failureThreshold: 1, resetTimeout: 60.0);
+        $hookCalled = false;
+        $failureError = null;
+
+        $pool->setObservers(
+            onConnectFailure: function ($key, $error) use (&$hookCalled, &$failureError) {
+                $hookCalled = true;
+                $failureError = $error;
+            }
+        );
+
+        try {
+            $pool->acquireOrNewWithRetry(
+                'host:25:user',
+                static fn() => throw new \RuntimeException('Connection refused'),
+                maxRetries: 1
+            );
+            self::fail('Expected CircuitOpenException was not thrown');
+        } catch (\PHPMailer\PHPMailer\CircuitOpenException $e) {
+            // Expected exception - verify it has correct message
+            self::assertStringContainsString('SMTP circuit breaker opened', $e->getMessage());
+        }
+
+        // Verify hook was called and error captured
+        self::assertTrue($hookCalled);
+        self::assertInstanceOf(\RuntimeException::class, $failureError);
+    }
+
+    public function testResetCounters(): void
+    {
+        $pool = new SmtpConnectionPool();
+        $smtp = new FakePoolSmtp(connected: true);
+
+        $pool->acquireOrNew('k', static fn() => $smtp);
+        $pool->release('k', $smtp);
+
+        $stats = $pool->stats();
+        self::assertGreaterThan(0, $stats['acquireMisses']);
+
+        $pool->resetCounters();
+
+        $stats = $pool->stats();
+        self::assertSame(0, $stats['acquireMisses']);
+        self::assertSame(0, $stats['releases']);
+    }
 }
 
 /**

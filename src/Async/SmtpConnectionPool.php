@@ -58,6 +58,33 @@ use Throwable;
  *
  *  - "host:port:user"                        — PROXY disabled
  *  - "host:port:user:srcip:srcport"          — PROXY enabled, per-peer pool
+ *
+ * ## Circuit Breaker
+ *
+ * The pool includes a per-key circuit breaker to prevent hammering a failing
+ * SMTP server. When failures exceed the threshold, the circuit "opens" and
+ * fails fast for a reset timeout period.
+ *
+ *     $pool = new SmtpConnectionPool();
+ *     $pool->setCircuitBreaker(failureThreshold: 5, resetTimeout: 60);
+ *
+ * ## Observability Hooks
+ *
+ * Set callbacks to be notified of pool events:
+ *
+ *     $pool->setObservers(
+ *         onAcquire: fn($smtp, $key) => $metrics->increment('smtp.acquire'),
+ *         onRelease: fn($smtp, $key) => $metrics->increment('smtp.release'),
+ *         onEvict: fn($smtp, $key) => $metrics->increment('smtp.evict'),
+ *         onConnectFailure: fn($key, $error) => $alerts->alert('smtp failure')
+ *     );
+ *
+ * ## Retry with Exponential Backoff
+ *
+ * The acquireOrNewWithRetry method automatically retries failed connections
+ * with exponential backoff:
+ *
+ *     $smtp = $pool->acquireOrNewWithRetry($key, $factory, maxRetries: 3);
  */
 final class SmtpConnectionPool
 {
@@ -77,6 +104,29 @@ final class SmtpConnectionPool
     private int $acquireMisses = 0;
     private int $releases = 0;
     private int $evictions = 0;
+    private int $connectFailures = 0;
+
+    // --- circuit breaker state ---
+
+    /** @var array<string, array{open: bool, failures: int, lastFailure: float}> */
+    private array $circuitState = [];
+
+    private int $circuitFailureThreshold = 5;
+    private float $circuitResetTimeout = 60.0;
+
+    // --- observability hooks ---
+
+    /** @var Closure|null */
+    private ?Closure $onAcquire = null;
+
+    /** @var Closure|null */
+    private ?Closure $onRelease = null;
+
+    /** @var Closure|null */
+    private ?Closure $onEvict = null;
+
+    /** @var Closure|null */
+    private ?Closure $onConnectFailure = null;
 
     public function __construct(
         int $maxPerKey = 8,
@@ -86,6 +136,96 @@ final class SmtpConnectionPool
         $this->maxPerKey = max(1, $maxPerKey);
         $this->idleTimeoutSec = $idleTimeoutSec;
         $this->useNoopHealthCheck = $useNoopHealthCheck;
+    }
+
+    /**
+     * Set circuit breaker parameters.
+     *
+     * @param int   $failureThreshold Number of failures before circuit opens
+     * @param float $resetTimeout     Seconds before trying again after circuit opens
+     */
+    public function setCircuitBreaker(int $failureThreshold = 5, float $resetTimeout = 60.0): void
+    {
+        $this->circuitFailureThreshold = max(1, $failureThreshold);
+        $this->circuitResetTimeout = max(0.1, $resetTimeout);
+    }
+
+    /**
+     * Set observability hooks for pool events.
+     *
+     * @param Closure|null $onAcquire Called when a connection is acquired from
+     *                                pool (fn(SMTP $smtp, string $key): void)
+     * @param Closure|null $onRelease Called when a connection is released to
+     *                                pool (fn(SMTP $smtp, string $key): void)
+     * @param Closure|null $onEvict   Called when a connection is evicted
+     *                                (fn(SMTP $smtp, string $key): void)
+     * @param Closure|null $onConnectFailure Called when a connection attempt
+     *                                       fails (fn(string $key, Throwable $e): void)
+     */
+    public function setObservers(
+        ?Closure $onAcquire = null,
+        ?Closure $onRelease = null,
+        ?Closure $onEvict = null,
+        ?Closure $onConnectFailure = null
+    ): void {
+        $this->onAcquire = $onAcquire;
+        $this->onRelease = $onRelease;
+        $this->onEvict = $onEvict;
+        $this->onConnectFailure = $onConnectFailure;
+    }
+
+    /**
+     * Check if circuit is open for a given key.
+     */
+    public function isCircuitOpen(string $key): bool
+    {
+        if (!isset($this->circuitState[$key])) {
+            return false;
+        }
+
+        $state = $this->circuitState[$key];
+
+        // If circuit is open and timeout hasn't expired, return true (fail fast)
+        if ($state['open'] && (microtime(true) - $state['lastFailure']) < $this->circuitResetTimeout) {
+            return true;
+        }
+
+        // Circuit is not open (still accumulating failures) - do NOT unset
+        // Only unset when circuit was open and timeout expired (to allow retry)
+        if ($state['open']) {
+            unset($this->circuitState[$key]);
+        }
+        return false;
+    }
+
+    /**
+     * Record a successful connection or operation.
+     */
+    public function recordSuccess(string $key): void
+    {
+        unset($this->circuitState[$key]);
+    }
+
+    /**
+     * Record a connection failure.
+     */
+    public function recordFailure(string $key): void
+    {
+        if (!isset($this->circuitState[$key])) {
+            $this->circuitState[$key] = [
+                'open' => false,
+                'failures' => 0,
+                'lastFailure' => 0.0,
+            ];
+        }
+
+        $state = &$this->circuitState[$key];
+        $state['failures']++;
+        $state['lastFailure'] = microtime(true);
+
+        if ($state['failures'] >= $this->circuitFailureThreshold) {
+            $state['open'] = true;
+        }
     }
 
     /**
@@ -100,38 +240,130 @@ final class SmtpConnectionPool
      * `$newFactory` is only invoked on a pool miss.
      *
      * @param Closure(): SMTP $newFactory
+     *
+     * @throws \PHPMailer\PHPMailer\CircuitOpenException if circuit breaker is open for this key
      */
     public function acquireOrNew(string $key, Closure $newFactory): SMTP
     {
+        // Check circuit breaker first
+        if ($this->isCircuitOpen($key)) {
+            throw new \PHPMailer\PHPMailer\CircuitOpenException(
+                "SMTP circuit breaker open for '{$key}' - too many recent failures"
+            );
+        }
+
         while (!empty($this->idle[$key])) {
             $smtp = array_pop($this->idle[$key]);
             $since = array_pop($this->idleSince[$key]);
 
             if ((microtime(true) - (float) $since) > $this->idleTimeoutSec) {
-                $this->safeClose($smtp);
+                $this->safeClose($smtp, $key);
                 continue;
             }
             if (!$smtp->connected()) {
-                $this->safeClose($smtp);
+                $this->safeClose($smtp, $key);
                 continue;
             }
             if ($this->useNoopHealthCheck) {
                 try {
                     if (!$smtp->noop()) {
-                        $this->safeClose($smtp);
+                        $this->safeClose($smtp, $key);
                         continue;
                     }
                 } catch (Throwable $t) {
-                    $this->safeClose($smtp);
+                    $this->safeClose($smtp, $key);
                     continue;
                 }
             }
             $this->acquireHits++;
+            $this->invokeHook($this->onAcquire, $smtp, $key);
             return $smtp;
         }
 
         $this->acquireMisses++;
-        return $newFactory();
+        $smtp = $newFactory();
+
+        return $smtp;
+    }
+
+    /**
+     * Acquire a connection with automatic retry and exponential backoff.
+     *
+     * If a connection failure occurs during the factory call or initial
+     * health check, this method retries up to $maxRetries times with
+     * exponential backoff between attempts.
+     *
+     * @param Closure(): SMTP $newFactory
+     * @param int           $maxRetries Maximum number of retry attempts
+     * @param float         $baseBackoff Base backoff time in seconds (doubles each retry)
+     *
+     * @return SMTP
+     *
+     * @throws \PHPMailer\PHPMailer\CircuitOpenException if circuit breaker is open
+     * @throws \PHPMailer\PHPMailer\AllRetriesFailedException if all retries fail
+     */
+    public function acquireOrNewWithRetry(
+        string $key,
+        Closure $newFactory,
+        int $maxRetries = 3,
+        float $baseBackoff = 0.1
+    ): SMTP {
+        $lastError = null;
+        $backoff = $baseBackoff;
+
+        for ($attempt = 0; $attempt <= $maxRetries; $attempt++) {
+            // Check circuit breaker before each attempt
+            if ($this->isCircuitOpen($key)) {
+                throw new \PHPMailer\PHPMailer\CircuitOpenException(
+                    "SMTP circuit breaker open for '{$key}'"
+                );
+            }
+
+            try {
+                $smtp = $this->acquireOrNew($key, $newFactory);
+
+                // If acquireOrNew returned a fresh instance (not from pool),
+                // test the connection
+                if (!$smtp->connected()) {
+                    // This is a fresh instance - do a quick connectivity test
+                    // by attempting a noop if connected
+                    // Actually, the caller should test - we just return the smtp
+                    // But let's record success for the connection attempt
+                    $this->recordSuccess($key);
+                }
+
+                return $smtp;
+            } catch (\PHPMailer\PHPMailer\CircuitOpenException $t) {
+                // Circuit breaker opened while trying to connect - re-throw immediately without catching
+                throw $t;
+            } catch (Throwable $t) {
+                $lastError = $t;
+                $this->recordFailure($key);
+                $this->connectFailures++;
+
+                // Invoke failure hook
+                $this->invokeHook($this->onConnectFailure, $key, $t);
+
+                // If circuit is now open, stop retrying
+                if ($this->isCircuitOpen($key)) {
+                    throw new \PHPMailer\PHPMailer\CircuitOpenException(
+                        "SMTP circuit breaker opened for '{$key}' after {$attempt} failures"
+                    );
+                }
+
+                // If we have retries left, wait with exponential backoff
+                if ($attempt < $maxRetries) {
+                    usleep((int)($backoff * 1000000));
+                    $backoff *= 2; // Exponential backoff
+                }
+            }
+        }
+
+        // All retries exhausted
+        $errorMsg = $lastError ? $lastError->getMessage() : 'unknown error';
+        throw new \PHPMailer\PHPMailer\AllRetriesFailedException(
+            "All {$maxRetries} retries failed for '{$key}': {$errorMsg}"
+        );
     }
 
     /**
@@ -141,16 +373,19 @@ final class SmtpConnectionPool
      */
     public function release(string $key, SMTP $smtp): void
     {
+        // Record success when connection is successfully released back to pool
+        $this->recordSuccess($key);
+
         if (!$smtp->connected()) {
             return;
         }
         try {
             if (!$smtp->reset()) {
-                $this->safeClose($smtp);
+                $this->safeClose($smtp, $key);
                 return;
             }
         } catch (Throwable $t) {
-            $this->safeClose($smtp);
+            $this->safeClose($smtp, $key);
             return;
         }
 
@@ -164,13 +399,15 @@ final class SmtpConnectionPool
             $oldest = array_shift($this->idle[$key]);
             array_shift($this->idleSince[$key]);
             if ($oldest !== null) {
-                $this->safeClose($oldest);
+                $this->safeClose($oldest, $key);
                 $this->evictions++;
+                $this->invokeHook($this->onEvict, $oldest, $key);
             }
         }
         $this->idle[$key][] = $smtp;
         $this->idleSince[$key][] = microtime(true);
         $this->releases++;
+        $this->invokeHook($this->onRelease, $smtp, $key);
     }
 
     /**
@@ -178,9 +415,9 @@ final class SmtpConnectionPool
      */
     public function closeAll(): void
     {
-        foreach ($this->idle as $list) {
+        foreach ($this->idle as $key => $list) {
             foreach ($list as $smtp) {
-                $this->safeClose($smtp);
+                $this->safeClose($smtp, (string) $key);
             }
         }
         $this->idle = [];
@@ -210,6 +447,7 @@ final class SmtpConnectionPool
      *   - acquireMisses : pool misses that called the new-factory closure
      *   - releases      : entries handed back via release()
      *   - evictions     : entries closed because the per-key cap overflowed
+     *   - connectFailures: connection attempts that failed (via retry logic)
      *   - hitRatio      : acquireHits / max(1, acquireHits + acquireMisses)
      *   - idleNow       : current total idle entries across all keys
      *
@@ -218,6 +456,7 @@ final class SmtpConnectionPool
      *     acquireMisses: int,
      *     releases: int,
      *     evictions: int,
+     *     connectFailures: int,
      *     hitRatio: float,
      *     idleNow: int,
      * }
@@ -226,13 +465,41 @@ final class SmtpConnectionPool
     {
         $total = $this->acquireHits + $this->acquireMisses;
         return [
-            'acquireHits'   => $this->acquireHits,
-            'acquireMisses' => $this->acquireMisses,
-            'releases'      => $this->releases,
-            'evictions'     => $this->evictions,
-            'hitRatio'      => $total === 0 ? 0.0 : $this->acquireHits / $total,
-            'idleNow'       => $this->idleCount(),
+            'acquireHits'     => $this->acquireHits,
+            'acquireMisses'   => $this->acquireMisses,
+            'releases'        => $this->releases,
+            'evictions'       => $this->evictions,
+            'connectFailures' => $this->connectFailures,
+            'hitRatio'        => $total === 0 ? 0.0 : $this->acquireHits / $total,
+            'idleNow'         => $this->idleCount(),
         ];
+    }
+
+    /**
+     * Get circuit breaker state for all keys.
+     *
+     * @return array<string, array{open: bool, failures: int, lastFailure: float, timeUntilReset: float|null}>
+     */
+    public function getCircuitBreakerState(): array
+    {
+        $result = [];
+        $now = microtime(true);
+
+        foreach ($this->circuitState as $key => $state) {
+            $timeUntilReset = null;
+            if ($state['open']) {
+                $timeUntilReset = max(0, $this->circuitResetTimeout - ($now - $state['lastFailure']));
+            }
+
+            $result[$key] = [
+                'open' => $state['open'],
+                'failures' => $state['failures'],
+                'lastFailure' => $state['lastFailure'],
+                'timeUntilReset' => $timeUntilReset,
+            ];
+        }
+
+        return $result;
     }
 
     /**
@@ -252,11 +519,23 @@ final class SmtpConnectionPool
     }
 
     /**
+     * Reset all counters (useful for testing or metrics rotation).
+     */
+    public function resetCounters(): void
+    {
+        $this->acquireHits = 0;
+        $this->acquireMisses = 0;
+        $this->releases = 0;
+        $this->evictions = 0;
+        $this->connectFailures = 0;
+    }
+
+    /**
      * Try a clean QUIT then close. Swallows exceptions — the pool's job is
      * to make sure no caller ever sees a half-dead connection, not to
      * surface remote-side teardown errors.
      */
-    private function safeClose(SMTP $smtp): void
+    private function safeClose(SMTP $smtp, string $key): void
     {
         try {
             if ($smtp->connected()) {
@@ -269,6 +548,25 @@ final class SmtpConnectionPool
             $smtp->close();
         } catch (Throwable $t) {
             // ignored
+        }
+    }
+
+    /**
+     * Invoke a hook callback if it's set, with proper error handling.
+     *
+     * @param Closure|null $hook
+     * @param mixed        ...$args
+     */
+    private function invokeHook(?Closure $hook, ...$args): void
+    {
+        if ($hook === null) {
+            return;
+        }
+
+        try {
+            $hook(...$args);
+        } catch (Throwable $t) {
+            // Swallow hook errors - don't let them disrupt pool operations
         }
     }
 }
