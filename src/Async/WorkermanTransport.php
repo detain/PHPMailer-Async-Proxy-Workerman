@@ -158,7 +158,8 @@ final class WorkermanTransport implements Transport
     private function resolveImplicitCryptoMethod(array $contextOptions = []): int
     {
         foreach (['ssl', 'tls'] as $bucket) {
-            if (isset($contextOptions[$bucket]['crypto_method'])
+            if (
+                isset($contextOptions[$bucket]['crypto_method'])
                 && is_int($contextOptions[$bucket]['crypto_method'])
             ) {
                 return (int) $contextOptions[$bucket]['crypto_method'];
