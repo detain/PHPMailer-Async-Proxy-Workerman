@@ -26,12 +26,11 @@ jobs:
           php-version: '8.3'
           coverage: none
           extensions: ctype, filter, hash, sockets, pcntl, openssl, mbstring
-          tools: phpstan:^1.11
 
       - name: Install Composer dependencies
-        uses: "ramsey/composer-install@65e4f84970763564f46a70b8a54b90d033b3bdda" # 4.0.0
+        uses: "ramsey/composer-install@65e4f84970763564f46a70a54b90d033b3bdda" # 4.0.0
         with:
           custom-cache-suffix: $(date -u "+%Y-%m")
 
       - name: Run PHPStan
-        run: phpstan analyse --configuration phpstan.neon.dist --no-progress --error-format=github
+        run: vendor/bin/phpstan analyse --configuration phpstan.neon.dist --no-progress --error-format=github

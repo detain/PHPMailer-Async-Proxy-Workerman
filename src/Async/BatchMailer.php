@@ -63,7 +63,16 @@ final class BatchMailer implements \IteratorAggregate
     private int $connectTimeout;
 
     /** @var int */
+    // @phpstan-ignore property.onlyWritten
     private int $idleTimeoutSec;
+
+    /**
+     * Get the idle timeout for pool entries.
+     */
+    public function getIdleTimeoutSec(): int
+    {
+        return $this->idleTimeoutSec;
+    }
 
     /**
      * @param SmtpConnectionPool $pool Connection pool to use
@@ -185,10 +194,10 @@ final class BatchMailer implements \IteratorAggregate
      */
     private function createFactory(string $host, int $port, string $username, ?string $password): \Closure
     {
-        return static function () use ($host, $port, $username, $password): SMTP {
+        return static function () use ($username): SMTP {
             $s = new SMTP();
             $s->setTransport(TransportFactory::auto());
-            // Store credentials for later connection
+            // @phpstan-ignore-next-line XCLIENT_attributes is not a defined SMTP property
             $s->XCLIENT_attributes = [
                 'NAME' => $username,
             ];
@@ -238,17 +247,15 @@ final class BatchMailer implements \IteratorAggregate
     /**
      * Get the underlying SMTP factory.
      *
-     * @return Closure(): SMTP
+     * @return \Closure(): SMTP
      */
-    public function getSmtpFactory(): Closure
+    public function getSmtpFactory(): \Closure
     {
         return $this->smtpFactory;
     }
 
     /**
      * Allow iteration via foreach without explicitly calling sendAll.
-     *
-     * @param iterable<PHPMailer> $messages
      *
      * @return \Generator<string, array{email: string, ok: bool, error: ?string}>
      */

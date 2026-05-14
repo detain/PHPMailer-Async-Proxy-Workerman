@@ -131,6 +131,7 @@ final class RateLimitedTransportFactory
 
             public function connect(string $host, int $port, int $timeout, array $contextOptions = []): bool
             {
+                // @phpstan-ignore-next-line Private method called from inner class
                 $this->factory->waitForToken($this->host);
                 return $this->inner->connect($host, $port, $timeout, $contextOptions);
             }
@@ -148,6 +149,7 @@ final class RateLimitedTransportFactory
             public function write(string $data): int|false
             {
                 // Consume a token on write (indicates message data being sent)
+                // @phpstan-ignore-next-line Private method called from inner class
                 $this->factory->waitForToken($this->host);
                 return $this->inner->write($data);
             }

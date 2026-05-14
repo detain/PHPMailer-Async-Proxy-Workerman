@@ -110,7 +110,8 @@ final class WorkermanTransport implements Transport
                 // Apply cached TLS session if available (speeds up reconnect)
                 $sessionKey = $this->getTlsSessionKey($host, $port);
                 if (isset(self::$tlsSessions[$sessionKey])) {
-                    $this->applyTlsSession($context, self::$tlsSessions[$sessionKey]);
+                    // @phpstan-ignore-next-line stream_context_create returns resource, cast to object for PHPStan
+                    $this->applyTlsSession((object) $context, self::$tlsSessions[$sessionKey]);
                 }
 
                 $sock = @stream_socket_client(
@@ -487,10 +488,16 @@ final class WorkermanTransport implements Transport
 
         // Only cache if we have SSL
         $meta = @stream_get_meta_data($this->socket);
-        if ($meta === false || !($meta['crypto'] ?? false)) {
+        // @phpstan-ignore-next-line strictCompareToFalse stream_get_meta_data returns array|false
+        if ($meta === false) {
+            return;
+        }
+        // @phpstan-ignore-next-line issetOffset array shape doesn't include crypto key for non-SSL streams
+        if (!isset($meta['crypto'])) {
             return;
         }
 
+        // @phpstan-ignore-next-line unreachable
         try {
             // Get the TLS session
             $session = @stream_context_get_option($this->socket, 'ssl', 'session_cache');
