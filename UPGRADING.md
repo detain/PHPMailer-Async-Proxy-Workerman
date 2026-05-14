@@ -1,4 +1,4 @@
-# Upgrading from upstream PHPMailer 7.0.x to phpmailer-async-proxy-workerman 8.0.0-async.0
+# Upgrading from upstream PHPMailer 7.0.x to phpmailer-async-proxy-workerman 8.0.0+async
 
 The fork keeps the entire upstream PHPMailer API. Existing code that does
 `use PHPMailer\PHPMailer\PHPMailer;` and `new PHPMailer(true)` continues to
@@ -7,12 +7,13 @@ work without modification.
 What you have to know:
 
 1. **PHP 8.1+ only.** Drop PHP 5.5 / 7.x / 8.0 support before installing this
-   fork. Bring `composer.json` to `"php": "^8.1"` and remove any
-   PHPCompatibility / phan-target-php-version-7.x configs.
+   fork. Bring `composer.json` to `"php": "^8.1"` (or `"^8.1 || ^8.2 || ^8.3 || ^8.4"`
+   for explicit broader support) and remove any PHPCompatibility /
+   phan-target-php-version-7.x configs.
 
 2. **Composer name change.** Replace
    `"phpmailer/phpmailer": "..."` with
-   `"mailbaby/phpmailer-async-proxy-workerman": "^8.0.0-async"`. The PSR-4
+   `"mailbaby/phpmailer-async-proxy-workerman": "^8.0.0"`. The PSR-4
    namespace `PHPMailer\PHPMailer\` is unchanged, so `use` statements stay
    the same.
 
@@ -34,7 +35,7 @@ What you have to know:
    `bool|string` exactly as documented; the async path is invisible at the
    API boundary.
 
-See `README.md` for usage and `changelog.md` for the full list of additions.
+See `README.md` for usage and see the [changelog](changelog.md) for the full list of additions.
 
 ---
 
