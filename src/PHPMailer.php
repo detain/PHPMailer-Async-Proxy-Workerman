@@ -59,6 +59,7 @@ class PHPMailer
     const ICAL_METHOD_REFRESH = 'REFRESH';
     const ICAL_METHOD_COUNTER = 'COUNTER';
     const ICAL_METHOD_DECLINECOUNTER = 'DECLINECOUNTER';
+    const RFC822_DATE_FORMAT = 'D, j M Y H:i:s O';
 
     /**
      * Email priority.
@@ -1779,6 +1780,8 @@ class PHPMailer
 
             //Trim subject consistently
             $this->Subject = trim($this->Subject);
+
+
             //Create body before headers in case body makes changes to headers (e.g. altering transfer encoding)
             $this->MIMEHeader = '';
             $this->MIMEBody = $this->createBody();
@@ -2873,7 +2876,10 @@ class PHPMailer
     {
         $result = '';
 
-        $result .= $this->headerLine('Date', '' === $this->MessageDate ? self::rfcDate() : $this->MessageDate);
+        $result .= $this->headerLine(
+            'Date',
+            self::sanitiseDate($this->MessageDate)
+        );
 
         //The To header is created automatically by mail(), so needs to be omitted here
         if ('mail' !== $this->Mailer) {
@@ -2942,7 +2948,7 @@ class PHPMailer
             );
         } elseif (is_string($this->XMailer) && trim($this->XMailer) !== '') {
             //Some string
-            $result .= $this->headerLine('X-Mailer', trim($this->XMailer));
+            $result .= $this->headerLine('X-Mailer', $this->secureHeader(trim($this->XMailer)));
         } //Other values result in no X-Mailer header
 
         if ('' !== $this->ConfirmReadingTo) {
@@ -2992,13 +2998,20 @@ class PHPMailer
                 break;
             default:
                 //Catches case 'plain': and case '':
-                $result .= $this->textLine('Content-Type: ' . $this->ContentType . '; charset=' . $this->CharSet);
+                $result .= $this->textLine(
+                    'Content-Type: ' .
+                    $this->secureHeader($this->ContentType) .
+                    '; charset=' . $this->secureHeader($this->CharSet)
+                );
                 $ismultipart = false;
                 break;
         }
+        if (!$this->validateEncoding($this->Encoding)) {
+            throw new Exception(self::lang('encoding') . $this->Encoding);
+        }
         //RFC1341 part 5 says 7bit is assumed if not specified
         if (static::ENCODING_7BIT !== $this->Encoding) {
-            //RFC 2045 section 6.4 says multipart MIME parts may only use 7bit, 8bit or binary CTE
+            //RFC 2045 section 6.4 says multipart MIME parts may only use 7bit, 8bit, or binary CTE
             if ($ismultipart) {
                 if (static::ENCODING_8BIT === $this->Encoding) {
                     $result .= $this->headerLine('Content-Transfer-Encoding', static::ENCODING_8BIT);
@@ -3073,6 +3086,9 @@ class PHPMailer
 
         $this->setWordWrap();
 
+        if (!$this->validateEncoding($this->Encoding)) {
+            throw new Exception(self::lang('encoding') . $this->Encoding);
+        }
         $bodyEncoding = $this->Encoding;
         $bodyCharSet = $this->CharSet;
         //Can we do a 7-bit downgrade?
@@ -4452,7 +4468,7 @@ class PHPMailer
     }
 
     /**
-     * Return an RFC 822 formatted date.
+     * Return the current date and time as an RFC 822 formatted date.
      *
      * @return string
      */
@@ -4462,7 +4478,51 @@ class PHPMailer
         //Will default to UTC if it's not set properly in php.ini
         date_default_timezone_set(@date_default_timezone_get());
 
-        return date('D, j M Y H:i:s O');
+        return date(self::RFC822_DATE_FORMAT);
+    }
+
+    /**
+     * Normalise a user-supplied date into a correctly-formatted RFC 5322 date value
+     * string suitable for use in the Date header.
+     *
+     * Accepts:
+     *  - A {@see \DateTime} (or \DateTimeImmutable) object
+     *  - Any date/time string understood by PHP's DateTime constructor (RFC 5322, ISO 8601,
+     *    Unix timestamp with leading "@", natural-language strings, etc.)
+     *
+     * Dates in the future are not permitted for email headers; if the parsed date is later
+     * than "now" the method falls back to the current time via {@see self::rfcDate()}.
+     * An empty value, a non-string/non-DateTime argument, or any value that cannot be
+     * parsed will likewise fall back to {@see self::rfcDate()}.
+     *
+     * @param \DateTime|\DateTimeImmutable|string $date The date to normalise
+     *
+     * @return string An RFC 5322-formatted date string
+     */
+    private static function sanitiseDate($date)
+    {
+        try {
+            //Ensure the default timezone is set properly
+            date_default_timezone_set(@date_default_timezone_get());
+
+            if ($date instanceof \DateTimeInterface) {
+                $dt = $date;
+            } elseif (is_string($date) && $date !== '') {
+                $dt = new \DateTime($date);
+            } else {
+                //Empty string, null, or any unsupported type
+                return self::rfcDate();
+            }
+
+            //Reject future dates — they are invalid for outgoing message headers
+            if ($dt->getTimestamp() > time()) {
+                return self::rfcDate();
+            }
+
+            return $dt->format(self::RFC822_DATE_FORMAT);
+        } catch (\Exception $e) {
+            return self::rfcDate();
+        }
     }
 
     /**

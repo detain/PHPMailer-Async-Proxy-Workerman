@@ -1,5 +1,6 @@
 # PHPMailer Change Log
 
+<<<<<<< HEAD
 ## Version 8.0.0+async.4 (May 2026)
 
 Single follow-up correctness fix from the codex review on PR #19.
