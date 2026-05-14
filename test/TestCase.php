@@ -152,8 +152,10 @@ abstract class TestCase extends PolyfillTestCase
         foreach ($this->propertyChanges as $key => $value) {
             if ($key === 'to' || $key === 'cc' || $key === 'bcc' || $key === 'ReplyTo') {
                 if (is_array($value) && isset($value['address'], $value['name'])) {
-                    $this->setAddress($value['address'], $value['name'], $key);
-                } elseif (is_string($value)) {
+                    if ($value['address'] !== '') {
+                        $this->setAddress($value['address'], $value['name'], $key);
+                    }
+                } elseif (is_string($value) && $value !== '') {
                     $this->setAddress($value, '', $key);
                 }
 
