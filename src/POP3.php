@@ -229,8 +229,8 @@ class POP3
             $this->tval = (int) $timeout;
         }
         $this->do_debug = $debug_level;
-        $this->username = $username;
-        $this->password = $password;
+        $this->username = self::stripControls($username);
+        $this->password = self::stripControls($password);
         //Reset the error log
         $this->errors = [];
         //Connect
@@ -356,6 +356,8 @@ class POP3
         if (empty($password)) {
             $password = $this->password;
         }
+        $username = self::stripControls($username);
+        $password = self::stripControls($password);
 
         //Send the Username
         $this->sendString("USER $username" . static::LE);
@@ -513,5 +515,17 @@ class POP3
             'Connecting to the POP3 server raised a PHP warning:' .
             "errno: $errno errstr: $errstr; errfile: $errfile; errline: $errline"
         );
+    }
+
+    /**
+     * Strip all control chars from a string.
+     *
+     * @param string $string
+     *
+     * @return string
+     */
+    protected static function stripControls($string)
+    {
+        return preg_replace('/[\x00-\x1F\x7F]/u', '', $string);
     }
 }
