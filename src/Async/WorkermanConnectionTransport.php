@@ -248,7 +248,8 @@ final class WorkermanConnectionTransport implements Transport
             return false;
         }
         $this->assertInsideFiber(__METHOD__);
-        return $this->writeAll($data, $this->readTimeout) ? strlen($data) : false;
+        $written = $this->writeAll($data, $this->readTimeout);
+        return $written ?: false;
     }
 
     public function readLine(int $maxLength): string

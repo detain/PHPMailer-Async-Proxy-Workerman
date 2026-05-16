@@ -322,15 +322,9 @@ final class SmtpConnectionPool
             try {
                 $smtp = $this->acquireOrNew($key, $newFactory);
 
-                // If acquireOrNew returned a fresh instance (not from pool),
-                // test the connection
-                if (!$smtp->connected()) {
-                    // This is a fresh instance - do a quick connectivity test
-                    // by attempting a noop if connected
-                    // Actually, the caller should test - we just return the smtp
-                    // But let's record success for the connection attempt
-                    $this->recordSuccess($key);
-                }
+                // Fresh instance returned — caller will call smtpConnect() to
+                // establish the connection. Do NOT record success here since
+                // the connection hasn't been proven working yet.
 
                 return $smtp;
             } catch (\PHPMailer\PHPMailer\CircuitOpenException $t) {
@@ -373,21 +367,25 @@ final class SmtpConnectionPool
      */
     public function release(string $key, SMTP $smtp): void
     {
-        // Record success when connection is successfully released back to pool
-        $this->recordSuccess($key);
-
         if (!$smtp->connected()) {
+            $this->recordFailure($key);
+            $this->safeClose($smtp, $key);
             return;
         }
         try {
             if (!$smtp->reset()) {
+                $this->recordFailure($key);
                 $this->safeClose($smtp, $key);
                 return;
             }
         } catch (Throwable $t) {
+            $this->recordFailure($key);
             $this->safeClose($smtp, $key);
             return;
         }
+
+        // Connection is healthy — record success before adding to pool
+        $this->recordSuccess($key);
 
         if (!isset($this->idle[$key])) {
             $this->idle[$key] = [];

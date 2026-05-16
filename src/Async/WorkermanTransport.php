@@ -236,7 +236,8 @@ final class WorkermanTransport implements Transport
             return false;
         }
         return FiberRunner::run(function () use ($data) {
-            return $this->writeAll($data, $this->readTimeout);
+            $written = $this->writeAll($data, $this->readTimeout);
+            return $written ?: false;
         });
     }
 
