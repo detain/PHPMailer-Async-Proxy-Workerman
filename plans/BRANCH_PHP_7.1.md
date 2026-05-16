@@ -440,7 +440,7 @@ If a user wants to upgrade from PHP 7.1 to PHP 7.4 or 8.0:
 
 ```bash
 # In their composer.json, they can loosen constraint
-"mailbaby/phpmailer-async-proxy-workerman": "^8.0"  # For PHP 8.0
-"mailbaby/phpmailer-async-proxy-workerman": "^7.4"  # For PHP 7.4
-"mailbaby/phpmailer-async-proxy-workerman": "^7.1"  # For PHP 7.1
+"detain/phpmailer-async-proxy-workerman": "^8.0"  # For PHP 8.0
+"detain/phpmailer-async-proxy-workerman": "^7.4"  # For PHP 7.4
+"detain/phpmailer-async-proxy-workerman": "^7.1"  # For PHP 7.1
 ```

@@ -13,7 +13,7 @@ What you have to know:
 
 2. **Composer name change.** Replace
    `"phpmailer/phpmailer": "..."` with
-   `"mailbaby/phpmailer-async-proxy-workerman": "^8.0.0"`. The PSR-4
+   `"detain/phpmailer-async-proxy-workerman": "^8.0.0"`. The PSR-4
    namespace `PHPMailer\PHPMailer\` is unchanged, so `use` statements stay
    the same.
 

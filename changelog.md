@@ -138,7 +138,7 @@ Follow-up improvements after a post-merge review of `8.0.0-async.0`:
 
 ## Version 8.0.0-async.0 (May 2026) — Workerman + PROXY-protocol fork
 
-First release of the `mailbaby/phpmailer-async-proxy-workerman` fork. Base is
+First release of the `detain/phpmailer-async-proxy-workerman` fork. Base is
 upstream PHPMailer 7.0.2; only the SMTP transport layer and the PROXY-protocol
 support are new. Everything else (MIME, attachments, DKIM, S/MIME, OAuth,
 encodings, address parsing, localization) is unchanged from upstream.
@@ -146,7 +146,7 @@ encodings, address parsing, localization) is unchanged from upstream.
 ### Breaking changes
 * **PHP 8.1 minimum.** Drops support for PHP 5.5–8.0 (Fibers + Revolt EventLoop
   need PHP 8.1). The PHPCompatibility ruleset is removed from phpcs.
-* `phpmailer/phpmailer` -> `mailbaby/phpmailer-async-proxy-workerman` (the
+* `phpmailer/phpmailer` -> `detain/phpmailer-async-proxy-workerman` (the
   PSR-4 namespace `PHPMailer\PHPMailer\` is preserved, so existing `use`
   statements continue to work).
 

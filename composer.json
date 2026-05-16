@@ -1,5 +1,5 @@
 {
-    "name": "mailbaby/phpmailer-async-proxy-workerman",
+    "name": "detain/phpmailer-async-proxy-workerman",
     "type": "library",
     "description": "Async, non-blocking PHPMailer drop-in built on Workerman + PHP Fibers, with first-class PROXY Protocol v1+v2 support. Fork of phpmailer/phpmailer 7.0.2.",
     "keywords": [

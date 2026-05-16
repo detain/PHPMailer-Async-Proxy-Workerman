@@ -130,15 +130,23 @@ jobs:
           sudo systemctl stop postfix.service || true
           sudo systemctl stop sendmail.service || true
 
-      - name: Set up sendmail + smtp-sink
+      - name: Set up sendmail replacement
         run: |
-          smtp-sink -d "%d.%H.%M.%S" localhost:2500 1000 &
-          mkdir -p build/logs
-          sudo cp test/testbootstrap-dist.php test/testbootstrap.php
           sudo chmod +x test/fakesendmail.sh
           sudo mkdir -p /var/qmail/bin
           sudo cp test/fakesendmail.sh /var/qmail/bin/sendmail
           sudo cp test/fakesendmail.sh /usr/sbin/sendmail
+
+      - name: Start MailHog SMTP server
+        run: |
+          # Download and run MailHog (accepts all mail, no auth, stores for inspection)
+          curl -sL https://github.com/mailhog/MailHog/releases/download/v1.0.1/MailHog_linux_amd64 -o mailhog
+          chmod +x mailhog
+          nohup ./mailhog > /dev/null 2>&1 &
+          # Wait for MailHog to start (it binds quickly)
+          sleep 2
+          mkdir -p build/logs
+          cp test/testbootstrap-dist.php test/testbootstrap.php
 
       - name: Run upstream + sync tests
         if: ${{ matrix.coverage == false }}

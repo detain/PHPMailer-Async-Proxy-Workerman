@@ -56,7 +56,7 @@ is untouched.
 ## Install
 
 ```sh
-composer require mailbaby/phpmailer-async-proxy-workerman
+composer require detain/phpmailer-async-proxy-workerman
 ```
 
 Requirements: PHP 8.1+ (uses Fibers). `ext-openssl` for TLS/STARTTLS;

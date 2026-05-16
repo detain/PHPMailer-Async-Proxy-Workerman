@@ -646,7 +646,7 @@ $transport->connect('smtp.example.com', 587, 30);
 
 ```json
 {
-    "name": "mailbaby/phpmailer-async-proxy-workerman",
+    "name": "detain/phpmailer-async-proxy-workerman",
     "type": "library",
     "description": "Async PHPMailer for PHP 5.6+ with PROXY Protocol support",
     "require": {

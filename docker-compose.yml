@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: mailhog
+    ports:
+      - "1025:1025"   # SMTP server (use this as mail_port)
+      - "8025:8025"   # Web UI (http://localhost:8025)
+    networks:
+      - mail
+
+networks:
+  mail:
+    driver: bridge
