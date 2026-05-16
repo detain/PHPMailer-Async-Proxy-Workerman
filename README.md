@@ -236,7 +236,7 @@ Examples of how to use PHPMailer for common scenarios can be found in the
 
 See [UPGRADING.md](UPGRADING.md) for instructions on:
 - [Upgrading from upstream PHPMailer 7.x to this fork](UPGRADING.md#upgrading-from-upstream-phpmailer-70x-to-phpmailer-async-proxy-workerman-800-async0)
-- [Upgrading from PHPMailer 5.2 to 6.0](UPGRADING.md#upgrading-from-phpmailer-52-to-60)
+- [Upgrading from PHPMailer 5.2](UPGRADING.md#upgrading-from-phpmailer-52)
 
 ## Contributing
 

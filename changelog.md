@@ -1,6 +1,34 @@
 # PHPMailer Change Log
 
-<<<<<<< HEAD
+## Upstream sync — PHPMailer 7.1.0 (May 2026)
+
+Merged upstream PHPMailer 7.1.0 into the fork. The base remained 7.0.2 prior
+to this merge; everything from upstream's 7.1.0 release is now reflected here.
+
+* `src/POP3.php` — security: strip C0/DEL control bytes from POP3 `USER` /
+  `PASS` (CRLF-injection hardening for the unencoded POP3 protocol). The
+  `stripControls()` helper was pre-applied in commit `ded3865f`; the upstream
+  merge brought in the matching `(int) $debug_level` cast and PHPDoc tweak.
+* SMTP transport is unaffected — `AUTH PLAIN` / `AUTH LOGIN` / `AUTH CRAM-MD5`
+  / `XOAUTH2` all base64-encode credentials before transmission, so the same
+  CRLF concern does not apply. The new `Async\WorkermanTransport`,
+  `Async\StreamTransport`, and `Async\WorkermanConnectionTransport` therefore
+  needed no parallel fix.
+* CI: switched runners from `ubuntu-22.04` to `ubuntu-latest` across
+  `tests.yml` (`coding-standard`, `lint`, `test-sync`, `test-async`) and
+  `static-analysis.yml` for parity with upstream's "Run on Ubuntu latest".
+* Docs: README's legacy-versions link and `UPGRADING.md`'s "Upgrading from
+  PHPMailer 5.2" heading were updated to match upstream's renamed section
+  anchor (`#upgrading-from-phpmailer-52`).
+* `VERSION`, `PHPMailer::VERSION`, `SMTP::VERSION`, `POP3::VERSION` remain
+  at `8.0.0+async.4` — the fork is already past upstream's `7.1.0` and
+  carries the upstream changes as part of the 8.0 baseline.
+* Cleaned up two stray `<<<<<<< HEAD` markers at the top of `changelog.md`
+  that were accidentally committed by an earlier botched merge.
+
+The full upstream 7.1.0 entry is preserved verbatim further down this file
+under the "Upstream tracking" section.
+
 ## Version 8.0.0+async.4 (May 2026)
 
 Single follow-up correctness fix from the codex review on PR #19.
@@ -185,9 +213,21 @@ Upstream changelog entries below this line are preserved unchanged.
 
 ---
 
+## Version 7.1.0 (May 15th, 2026)
+* Validate `MessageDate` before including it in headers.
+* Minor feature: some common non-RFC date formats and DateTime instances are now automatically converted to the right format for `MessageDate`.
+* Strip breaks from `XMailer`, `ContentType`, and `CharSet` properties.
+* Strip breaks from `username` and `password` properties before use in `POP3`.
+* Enforce strict checks on `Encoding` values.
+* Ease BC IMAP issues by allowing the `parseAddresses` `$useimap` parameter to be `false` or `null` without triggering a deprecation warning.
+* Updated Turkish and Norwegian translations.
+* Test case cleanup and improvements by @jrfnl.
+* Fix crash if `Mailer` ended up empty.
+* Use Ubuntu 24.04 for tests.
+
 ## Version 7.0.2 (January 9th, 2026)
-* Fixes for sendmail parameter problems in WordPress, thanks to @SirLouen
-* Reduce memory consumption when sending large attachments by @RobinvanderVliet
+* Fixes for sendmail parameter problems in WordPress, thanks to @SirLouen.
+* Reduce memory consumption when sending large attachments by @RobinvanderVliet.
 
 ## Version 7.0.1 (November 25th, 2025)
 * Use From domain when generating CIDs in msgHTML.

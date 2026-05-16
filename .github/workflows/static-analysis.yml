@@ -9,7 +9,7 @@ permissions: {}
 
 jobs:
   phpstan:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     name: PHPStan
     permissions:
       contents: read

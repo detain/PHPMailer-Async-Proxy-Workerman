@@ -10,7 +10,7 @@ permissions: {}
 jobs:
 
   coding-standard:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     name: Coding standards
     permissions:
       contents: read
@@ -43,7 +43,7 @@ jobs:
         run: cs2pr ./phpcs-report.xml
 
   lint:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         php: ['8.1', '8.2', '8.3', '8.4']
@@ -90,7 +90,7 @@ jobs:
 
   test-sync:
     needs: ['coding-standard', 'lint']
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     name: "Tests (sync transport): PHP ${{ matrix.php }}"
     strategy:
       fail-fast: false
@@ -168,7 +168,7 @@ jobs:
 
   test-async:
     needs: ['coding-standard', 'lint']
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     name: "Tests (async transport): PHP ${{ matrix.php }}"
     strategy:
       fail-fast: false

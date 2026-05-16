@@ -228,7 +228,7 @@ class POP3
         } else {
             $this->tval = (int) $timeout;
         }
-        $this->do_debug = $debug_level;
+        $this->do_debug = (int) $debug_level;
         $this->username = self::stripControls($username);
         $this->password = self::stripControls($password);
         //Reset the error log
@@ -358,7 +358,6 @@ class POP3
         }
         $username = self::stripControls($username);
         $password = self::stripControls($password);
-
         //Send the Username
         $this->sendString("USER $username" . static::LE);
         $pop3_response = $this->getResponse();
