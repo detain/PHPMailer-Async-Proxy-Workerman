@@ -59,7 +59,7 @@ final class Configurator
      * Disabled — the SMTP transport interprets `null` as "do not write a
      * PROXY header at all".
      */
-    public static function disabled(): null
+    public static function disabled()
     {
         return null;
     }
