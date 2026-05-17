@@ -604,6 +604,7 @@ final class WorkermanConnectionTransport implements Transport
                 $backoff = min($backoff * 2, 0.05);
             }
         } finally {
+            /** @phpstan-ignore-next-line notIdentical.alwaysTrue */
             if ($this->conn !== null) {
                 $this->conn->resumeRecv();
             }

@@ -464,12 +464,8 @@ final class WorkermanTransport implements Transport
      */
     private function applyTlsSession(object $context, string $session): void
     {
-        if (PHP_VERSION_ID >= 80100) {
-            // PHP 8.1+ has native session cache support
-            stream_context_set_option($context, 'ssl', 'session_cache', $session);
-        }
-        // For older PHP versions, TLS session resumption is more limited
-        // The session string itself can be used with OpenSSL session IDs
+        // PHP 8.1+ has native session cache support
+        stream_context_set_option($context, 'ssl', 'session_cache', $session);
     }
 
     /**
@@ -501,6 +497,7 @@ final class WorkermanTransport implements Transport
         // @phpstan-ignore-next-line unreachable
         try {
             // Get the TLS session
+            // @phpstan-ignore function.notFound
             $session = @stream_context_get_option($this->socket, 'ssl', 'session_cache');
 
             if (!empty($session)) {
@@ -551,7 +548,7 @@ final class WorkermanTransport implements Transport
         // The socket is writable — confirm there was no async connect error.
         if (function_exists('socket_import_stream') && function_exists('socket_get_option')) {
             $importedSocket = @socket_import_stream($this->socket);
-            if ($importedSocket !== false && $importedSocket !== null) {
+            if ($importedSocket !== false) {
                 $err = @socket_get_option($importedSocket, SOL_SOCKET, SO_ERROR);
                 if (is_int($err) && $err !== 0) {
                     $msg = function_exists('socket_strerror') ? socket_strerror($err) : ('errno ' . $err);
