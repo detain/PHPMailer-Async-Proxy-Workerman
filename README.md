@@ -191,10 +191,10 @@ PROXY is on.
 | Component   | Version                                          |
 |-------------|--------------------------------------------------|
 | PHP         | 8.1 / 8.2 / 8.3 / 8.4                            |
-| Workerman   | ^5.0 (optional but required for async)           |
+| Workerman   | ^5.1 (optional but required for async)           |
 | Revolt      | ^1.0                                             |
 | PHPUnit     | ^9.6 (upstream PHPMailer tests)                  |
-| PHPStan     | ^1.11 (level 5 on src/Async + src/ProxyProtocol) |
+| PHPStan     | ^2.0 (level 5 on src/Async + src/ProxyProtocol)   |
 
 ## Tests
 
